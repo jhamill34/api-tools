@@ -602,7 +602,9 @@ impl APICallState {
 
                 path.assign(body, value)?;
             } else {
-                return Err(error::APICaller::InvalidRuntimeExpression(expression.into()));
+                return Err(error::APICaller::InvalidRuntimeExpression(
+                    expression.into(),
+                ));
             }
         } else {
             let mut params = serde_json::Map::new();

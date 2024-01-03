@@ -174,8 +174,8 @@ impl JsActionRunner {
             .call((inputs, api))
             .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
-        let result =
-            converters::from_v8(output).map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
+        let result = converters::from_v8(output)
+            .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         Ok(result)
     }
