@@ -43,7 +43,7 @@ pub fn start(
                     cache.insert(name.clone());
 
                     match inner_tx.send(true) {
-                        Ok(_) => {}
+                        Ok(()) => {}
                         Err(err) => println!("Unable to signal read for loading: {err}"),
                     }
                 },

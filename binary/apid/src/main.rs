@@ -10,6 +10,11 @@
     clippy::shadow_same,
     // clippy::too_many_lines
     clippy::question_mark_used,
+    clippy::absolute_paths,
+    clippy::single_call_fn,
+    clippy::ref_patterns,
+
+    clippy::min_ident_chars,
 )]
 
 //!

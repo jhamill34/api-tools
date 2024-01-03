@@ -1,4 +1,4 @@
-#![allow(clippy::integer_arithmetic, clippy::arithmetic_side_effects)]
+#![allow(clippy::arithmetic_side_effects)]
 
 //!
 

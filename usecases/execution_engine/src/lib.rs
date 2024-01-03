@@ -12,6 +12,7 @@
     clippy::too_many_lines,
     clippy::needless_borrowed_reference,
     clippy::question_mark_used,
+    clippy::ref_patterns
 )]
 
 //! Crate Docs
@@ -37,6 +38,7 @@ use std::{
     sync::{Mutex, RwLock},
 };
 
+use chrono::offset::Local;
 use core_entities::service::{code_resource::Language, service_manifest_latest};
 
 ///
@@ -153,7 +155,7 @@ impl Engine {
             let lookup = self
                 .lookup
                 .lock()
-                .map_err(|e| error::ExecutionEngine::PoisonedLock(e.to_string()))?;
+                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
             let service = lookup
                 .get_service(service_name)
                 .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
@@ -308,13 +310,13 @@ impl Engine {
 
     ///
     fn log(&self, id: &str, action_type: &str, status: &str) -> error::Result<()> {
-        let now = chrono::offset::Local::now();
+        let now = Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
         let mut logger = self
             .logger
             .write()
-            .map_err(|e| error::ExecutionEngine::PoisonedLock(e.to_string()))?;
+            .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
         logger.write_all(format!("{now} ({action_type}) [{status}] {id}\n").as_bytes())?;
 
         Ok(())

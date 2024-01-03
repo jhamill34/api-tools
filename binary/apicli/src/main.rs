@@ -8,8 +8,13 @@
     clippy::match_ref_pats,
     clippy::shadow_unrelated,
     clippy::shadow_same,
-    clippy::question_mark_used
+    clippy::question_mark_used,
     // clippy::too_many_lines
+    clippy::absolute_paths,
+    clippy::single_call_fn,
+    clippy::ref_patterns,
+
+    clippy::min_ident_chars,
 )]
 
 //!

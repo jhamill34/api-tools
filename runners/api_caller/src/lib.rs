@@ -18,6 +18,8 @@
     clippy::needless_borrowed_reference,
     clippy::separated_literal_suffix,
     clippy::question_mark_used,
+    clippy::absolute_paths,
+    clippy::ref_patterns,
 )]
 
 //!
@@ -55,7 +57,7 @@ where
     I: Iterator<Item = (&'item String, &'item serde_json::Value)>,
 {
     values
-        .map(|(k, v)| Ok((k.to_string(), simplify_value(v)?)))
+        .map(|(key, value)| Ok((key.to_string(), simplify_value(value)?)))
         .collect()
 }
 
@@ -169,7 +171,7 @@ impl APICallState {
 
         let mut log = log
             .write()
-            .map_err(|e| error::APICaller::PoisonedLock(e.to_string()))?;
+            .map_err(|err| error::APICaller::PoisonedLock(err.to_string()))?;
 
         let method = self.method.parse::<reqwest::Method>()?;
         let endpoint = self.resolve_endpoint()?;
@@ -184,9 +186,9 @@ impl APICallState {
         let headers: error::Result<HeaderMap> = self
             .header_params
             .iter()
-            .map(|(k, v)| {
-                let name = k.parse::<HeaderName>()?;
-                let value = simplify_value(v).and_then(|value| {
+            .map(|(key, val)| {
+                let name = key.parse::<HeaderName>()?;
+                let value = simplify_value(val).and_then(|value| {
                     value.parse::<HeaderValue>().map_err(error::APICaller::from)
                 })?;
 
@@ -600,6 +602,7 @@ impl APICallState {
 
                 path.assign(body, value)?;
             } else {
+                return Err(error::APICaller::InvalidRuntimeExpression(expression.into()));
             }
         } else {
             let mut params = serde_json::Map::new();

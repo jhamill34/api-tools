@@ -1,4 +1,7 @@
-#![allow(clippy::std_instead_of_core)]
+#![allow(
+    clippy::std_instead_of_core,
+    clippy::absolute_paths
+)]
 
 //!
 

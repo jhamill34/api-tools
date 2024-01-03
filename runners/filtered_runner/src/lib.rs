@@ -14,6 +14,10 @@
     clippy::too_many_lines,
     clippy::question_mark_used,
     clippy::needless_borrowed_reference,
+
+    clippy::absolute_paths,
+    clippy::single_call_fn,
+    clippy::ref_patterns,
 )]
 
 //!
@@ -31,7 +35,7 @@ use regex::Regex;
 
 lazy_static! {
     static ref OPERATION_REGEX: Option<Regex> =
-        Regex::new(r"(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
+        Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
 }
 
 ///
@@ -86,7 +90,7 @@ impl APIWrapper {
         let engine = self
             .engine
             .read()
-            .map_err(|e| error::FilteredRunner::PoisonedLock(e.to_string()))?;
+            .map_err(|err| error::FilteredRunner::PoisonedLock(err.to_string()))?;
         let result = engine.run(&id, input, serde_json::Value::Null, &context)?;
 
         let result = Rc::new(result);

@@ -10,6 +10,9 @@
     // clippy::too_many_lines
     clippy::question_mark_used,
     clippy::needless_borrowed_reference,
+    clippy::absolute_paths,
+    clippy::ref_patterns,
+    clippy::single_call_fn
 )]
 
 //!
@@ -362,8 +365,8 @@ fn handle_schema(
     // TODO: extract into a referece based on a flag
 
     match &source.value {
-        &Some(service::schema::Value::Ref(ref r)) => {
-            sink.insert("$ref".into(), r.clone().into());
+        &Some(service::schema::Value::Ref(ref reference)) => {
+            sink.insert("$ref".into(), reference.clone().into());
         }
         &Some(service::schema::Value::SchemaObject(ref schema)) => {
             match schema.type_.enum_value() {

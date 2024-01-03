@@ -13,6 +13,9 @@
     // Would like to turn on (Configured to 50?)
     clippy::too_many_lines,
     clippy::question_mark_used,
+    clippy::single_call_fn,
+    clippy::absolute_paths,
+    clippy::min_ident_chars
 )]
 
 //!
@@ -42,11 +45,11 @@ lazy_static! {
 }
 
 ///
-fn run_python<F>(f: F) -> PyResult<Value>
+fn run_python<F>(func: F) -> PyResult<Value>
 where
     F: FnOnce() -> PyResult<Value>,
 {
-    f()
+    func()
 }
 
 ///
@@ -163,7 +166,7 @@ impl PyActionRunner {
 
                 result
             })
-            .map_err(|e| error::PyActionRunner::PythonError(e.to_string()))
+            .map_err(|err| error::PyActionRunner::PythonError(err.to_string()))
         })
     }
 }

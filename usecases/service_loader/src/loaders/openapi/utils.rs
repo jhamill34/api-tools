@@ -104,12 +104,12 @@ fn fetch_and_cache<'cache, R: io::Read>(
     cache: &'cache mut HashMap<String, serde_json::Value>,
 ) -> error::Result<&'cache serde_json::Value> {
     let result = match cache.entry(source.to_owned()) {
-        Entry::Vacant(v) => {
+        Entry::Vacant(vacant) => {
             let result = fetcher.fetch(source)?;
             let result: serde_json::Value = serde_yaml::from_reader(result)?;
-            v.insert(result)
+            vacant.insert(result)
         }
-        Entry::Occupied(o) => o.into_mut(),
+        Entry::Occupied(occupied) => occupied.into_mut(),
     };
 
     Ok(result)
@@ -138,8 +138,8 @@ enum ReferenceType {
 impl FromStr for Reference {
     type Err = error::ServiceLoader;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split('#').collect();
+    fn from_str(string: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = string.split('#').collect();
         let source = parts.first();
 
         let path = parts

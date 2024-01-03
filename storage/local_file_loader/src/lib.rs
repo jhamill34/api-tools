@@ -9,7 +9,8 @@
     clippy::match_ref_pats,
 
     // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::absolute_paths
 )]
 
 //!

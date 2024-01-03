@@ -8,7 +8,10 @@
     clippy::shadow_unrelated,
     clippy::too_many_lines,
     clippy::question_mark_used,
-    clippy::needless_borrowed_reference
+    clippy::needless_borrowed_reference,
+    clippy::absolute_paths,
+    clippy::ref_patterns,
+    clippy::single_call_fn
 )]
 
 //!

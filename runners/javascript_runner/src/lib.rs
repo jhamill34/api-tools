@@ -14,6 +14,8 @@
     clippy::too_many_lines,
     clippy::question_mark_used,
     clippy::needless_borrowed_reference,
+    clippy::single_call_fn,
+    clippy::absolute_paths,
 )]
 
 //!
@@ -119,15 +121,15 @@ impl JsActionRunner {
             let now = now.format(constants::DATETIME_FORMAT).to_string();
 
             {
-                let mut logger = logger.write().map_err(|e| {
+                let mut logger = logger.write().map_err(|err| {
                     mini_v8::Error::ExternalError(Box::new(error::JsActionRunner::PoisonedLock(
-                        e.to_string(),
+                        err.to_string(),
                     )))
                 })?;
 
                 logger
                     .write_all(format!("{now} ({}) [API] {id}\n", name.clone()).as_bytes())
-                    .map_err(|e| mini_v8::Error::ExternalError(Box::new(e)))?;
+                    .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;
             };
 
             let params = converters::from_v8(params)?;
@@ -137,9 +139,9 @@ impl JsActionRunner {
                 serde_json::Value::Null
             };
 
-            let engine = engine.read().map_err(|e| {
+            let engine = engine.read().map_err(|err| {
                 mini_v8::Error::ExternalError(Box::new(error::JsActionRunner::PoisonedLock(
-                    e.to_string(),
+                    err.to_string(),
                 )))
             })?;
             let context = execution_engine::services::EngineInputContext::new(
@@ -149,7 +151,7 @@ impl JsActionRunner {
             );
             let result = engine
                 .run(&id, params, options, &context)
-                .map_err(|e| mini_v8::Error::ExternalError(Box::new(e)))?;
+                .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;
 
             let output = converters::from_value(&inv.mv8, result)?;
 
@@ -157,23 +159,23 @@ impl JsActionRunner {
         });
         let api = mv8.create_object();
         api.set("run", api_binding)
-            .map_err(|e| error::JsActionRunner::V8(e.to_string()))?;
+            .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         let source_code = wrap_source_code(source_code)?;
 
         let execute_internal: mini_v8::Function = mv8
             .eval(source_code)
-            .map_err(|e| error::JsActionRunner::V8(e.to_string()))?;
+            .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         let inputs = converters::from_value(&mv8, params)
-            .map_err(|e| error::JsActionRunner::V8(e.to_string()))?;
+            .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         let output = execute_internal
             .call((inputs, api))
-            .map_err(|e| error::JsActionRunner::V8(e.to_string()))?;
+            .map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         let result =
-            converters::from_v8(output).map_err(|e| error::JsActionRunner::V8(e.to_string()))?;
+            converters::from_v8(output).map_err(|err| error::JsActionRunner::V8(err.to_string()))?;
 
         Ok(result)
     }
