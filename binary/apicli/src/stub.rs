@@ -66,9 +66,7 @@ pub fn get_input(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -84,9 +82,7 @@ pub fn get_input(
                 input_example.insert(param.name.clone(), default_value);
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(ref manifest)) => {
             for param in &manifest.inputs {
                 let default_value = parameter_to_value(param.param.type_.enum_value_or_default());
                 input_example.insert(param.param.name.clone(), default_value);
@@ -122,15 +118,13 @@ pub fn get_output(
             let types = &service.commonApi.schemas;
 
             if operation.apiResponses.is_some() {
-                let mut status_codes: Trie<core_entities::service::ApiResponse> =
-                    Trie::default();
+                let mut status_codes: Trie<core_entities::service::ApiResponse> = Trie::default();
                 for (key, value) in &operation.apiResponses.apiResponses {
                     status_codes.insert(key, value.clone());
                 }
 
                 if let Some(response) = status_codes.find("200") {
-                    let mut trie: Trie<core_entities::service::MediaType> =
-                        Trie::default();
+                    let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
                     for (key, value) in &response.content {
                         trie.insert(key, value.clone());
                     }
@@ -157,9 +151,7 @@ pub fn get_output(
                 Ok(serde_json::Value::Object(serde_json::Map::new()))
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -175,9 +167,7 @@ pub fn get_output(
 
             Ok(serde_json::Value::Object(output_examples))
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(ref manifest)) => {
             let mut output_examples = serde_json::Map::new();
             for param in &manifest.outputSelectors {
                 // TODO: use JMES path to determine type

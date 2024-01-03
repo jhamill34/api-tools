@@ -7,10 +7,10 @@ use std::{collections::HashMap, io};
 use crate::Fetcher;
 
 use super::{constants, error};
-use credential_entities::credentials::Authentication;
 use core_entities::service::{
     ServiceManifest, ServiceResource, SwaggerOverrides, VersionedServiceTree,
 };
+use credential_entities::credentials::Authentication;
 
 ///
 pub fn load_configuration<R: io::Read>(

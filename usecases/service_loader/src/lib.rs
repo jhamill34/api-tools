@@ -20,9 +20,9 @@ pub mod error;
 
 use std::io;
 
+use core_entities::service::{SwaggerOverrides, VersionedServiceTree};
 use credential_entities::credentials::Authentication;
 use loaders::{load_configuration, load_credentials, load_service};
-use core_entities::service::{SwaggerOverrides, VersionedServiceTree};
 
 ///
 pub trait LoaderOutput {
@@ -99,11 +99,9 @@ pub fn merge(
             .ok_or_else(|| error::ServiceLoader::NotFound("Auth Configuration".into()))?;
         let oauth_config = oauth_config.mut_oauthConfig();
 
-        if let &Some(
-            core_entities::service::swagger_overrides::AuthOverrides::OauthConfig(
-                ref oauth_config_override,
-            ),
-        ) = &overrides.authOverrides
+        if let &Some(core_entities::service::swagger_overrides::AuthOverrides::OauthConfig(
+            ref oauth_config_override,
+        )) = &overrides.authOverrides
         {
             apply_if_exists!(name, oauth_config_override => oauth_config);
             apply_if_exists!(authUri, oauth_config_override => oauth_config);

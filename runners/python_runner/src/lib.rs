@@ -135,10 +135,7 @@ impl PyActionRunner {
                 let module = PyModule::from_code(py, source_code, name, operation_name)?;
                 module.add(constants::BINDING_API_KEY, PyCell::new(py, api)?)?;
                 module.add(constants::BINDING_WORKFLOW_KEY, PyCell::new(py, workflow)?)?;
-                module.add(
-                    constants::BINDING_ACTION_KEY,
-                    PyCell::new(py, action)?,
-                )?;
+                module.add(constants::BINDING_ACTION_KEY, PyCell::new(py, action)?)?;
                 module.add(constants::BINDING_TASK_KEY, PyCell::new(py, task)?)?;
 
                 let func_name = PyString::new(py, &function_name);

@@ -17,6 +17,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _};
+use core_entities::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
 use engine_entities::engine::{
     engine_client::EngineClient, GetRunResultRequest, GetSerivceRequest, ListRequest,
@@ -26,7 +27,6 @@ use oauth_flow::Authenticator;
 use protobuf::Message;
 use protobuf_json_mapping::PrintOptions;
 use tonic::{transport::Channel, Request};
-use core_entities::service::VersionedServiceTree;
 
 use crate::{
     config::Configuration,

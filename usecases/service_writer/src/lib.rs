@@ -16,9 +16,9 @@
 
 use std::{collections::HashMap, io};
 
+use core_entities::{service, service::VersionedServiceTree};
 use credential_entities::credentials::Authentication;
 use protobuf::EnumFull as _;
-use core_entities::{service, service::VersionedServiceTree};
 
 pub mod error;
 

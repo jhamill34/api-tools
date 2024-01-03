@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use credential_entities::credentials::Authentication;
 use core_entities::service::VersionedServiceTree;
+use credential_entities::credentials::Authentication;
 
 pub struct EnvironmentState {
     pub service: VersionedServiceTree,

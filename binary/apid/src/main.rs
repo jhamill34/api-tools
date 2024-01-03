@@ -33,6 +33,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
+use core_entities::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
 use dotenv::dotenv;
 use engine_entities::engine::{
@@ -49,7 +50,6 @@ use local_file_loader::LocalFileFetcher;
 use protobuf::Message;
 use service_writer::ServiceWriter;
 use tonic::{transport::Server, Request, Response, Status};
-use core_entities::service::VersionedServiceTree;
 use user_input::Signals;
 
 #[cfg(feature = "dhat-heap")]

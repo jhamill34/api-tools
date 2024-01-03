@@ -1,4 +1,4 @@
 //!
 
 ///
-pub const AICLI_CONFIG_PATH: &str = "APICLI_CONFIG_PATH";
+pub const APICLI_CONFIG_PATH: &str = "APICLI_CONFIG_PATH";

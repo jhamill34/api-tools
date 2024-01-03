@@ -68,9 +68,7 @@ pub fn get_input_paths(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -126,15 +124,13 @@ pub fn get_output_paths(
             let types = &service.commonApi.schemas;
 
             if operation.apiResponses.is_some() {
-                let mut status_codes: Trie<core_entities::service::ApiResponse> =
-                    Trie::default();
+                let mut status_codes: Trie<core_entities::service::ApiResponse> = Trie::default();
                 for (key, value) in &operation.apiResponses.apiResponses {
                     status_codes.insert(key, value.clone());
                 }
 
                 if let Some(response) = status_codes.find("200") {
-                    let mut trie: Trie<core_entities::service::MediaType> =
-                        Trie::default();
+                    let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
                     for (key, value) in &response.content {
                         trie.insert(key, value.clone());
                     }
@@ -157,9 +153,7 @@ pub fn get_output_paths(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(
-            ref manifest,
-        )) => {
+        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
             let operation = manifest
                 .operations
                 .iter()

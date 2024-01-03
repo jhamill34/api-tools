@@ -433,21 +433,13 @@ impl ActionLogger {
                 .ok_or_else(|| PyTypeError::new_err("Unable to find summary in display object"))?;
 
             logger.write_all(
-                format!(
-                    "{now} ({}) [action|{log_level}]: {summary}\n",
-                    self.name
-                )
-                .as_bytes(),
+                format!("{now} ({}) [action|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else if display.is_instance_of::<PyString>()? {
             let summary = display.downcast::<PyString>()?.to_str()?;
 
             logger.write_all(
-                format!(
-                    "{now} ({}) [action|{log_level}]: {summary}\n",
-                    self.name
-                )
-                .as_bytes(),
+                format!("{now} ({}) [action|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else {
             return Err(PyTypeError::new_err("Invalid type for display object"));

@@ -74,11 +74,11 @@ pub async fn route(
             );
             response_builder =
                 response_builder.header("Authorization", &format!("Basic {}", basic_credentials));
-        },
+        }
         core_entities::service::service_manifest_latest::oauth_config::ParameterLocation::BODY => {
             body.insert("client_id", &client_id);
             body.insert("client_secret", &client_secret);
-        },
+        }
     }
 
     let response = response_builder.form(&body).send().await?;

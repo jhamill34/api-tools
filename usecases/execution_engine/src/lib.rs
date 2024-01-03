@@ -191,7 +191,7 @@ impl Engine {
                 }
             }
             &Some(service_manifest_latest::Value::Action(ref action)) => {
-                let operation = action 
+                let operation = action
                     .operations
                     .iter()
                     .find(|item| item.id == *operation_name);
