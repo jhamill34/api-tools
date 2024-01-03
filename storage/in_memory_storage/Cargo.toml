@@ -1,0 +1,21 @@
+[package]
+name = "in_memory_storage"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+common_data_structures = { path = "../../common/data_structures" }
+serde_json = "1.0"
+protobuf = "3.2"
+protobuf-json-mapping = "3.2"
+
+service_loader = { path = "../../usecases/service_loader" }
+execution_engine = { path = "../../usecases/execution_engine" }
+
+core_entities = { path = "../../entities/core" }
+credential_entities = { path = "../../entities/credentials" }
+
+regex = "1.7"
+thiserror = "1.0"

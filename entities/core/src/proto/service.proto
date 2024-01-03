@@ -1,0 +1,537 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+
+package proto;
+
+import "google/protobuf/wrappers.proto";
+
+
+//==================================================
+// OPEN API SPEC
+//==================================================
+
+message CommonApi {
+  oneof server {
+    string basePath = 2;
+    ServerWithVariables serverWithVariables = 8;
+  }
+  map<string, Operation> operations = 3;
+  map<string, Schema> schemas = 4;
+  string title = 5;
+  string description = 6;
+}
+
+message ServerWithVariables {
+  message Variable {
+    string default = 1;
+    string description = 2;
+  }
+
+  string url = 1;
+  map<string, Variable> variables = 2;
+}
+
+message Operation {
+  enum HttpMethodType {
+    HTTP_METHOD_TYPE_NONE = 0;
+    POST = 1;
+    GET = 2;
+    PUT = 3;
+    PATCH = 4;
+    DELETE = 5;
+    HEAD = 6;
+    OPTIONS = 7;
+    TRACE = 8;
+  }
+
+  string path = 1;
+  HttpMethodType method = 2;
+  repeated Parameter parameter = 3;
+  RequestBody requestBody = 4;
+  ApiResponses apiResponses = 5;
+  string id = 6;
+  string description = 7;
+  Pagination pagination = 8;
+  string summary = 11;
+}
+
+message Pagination {
+  message ExtendedPath {
+    oneof value {
+      string columnPath = 1;
+      string jmesPath = 2;
+    }
+  }
+
+  message MultiCursor {
+    repeated ExtendedPath cursorsPath = 1;
+    repeated string cursorsParam = 2;
+    string limitParam = 3;
+    google.protobuf.Int32Value maxLimit = 4;
+    ExtendedPath resultsPath = 5;
+    google.protobuf.BoolValue errorOnPathNotFound = 6;
+  }
+
+  message PageOffset {
+    string pageOffsetParam = 1;
+    google.protobuf.Int32Value startPage = 2;
+    string limitParam = 3;
+    google.protobuf.Int32Value maxLimit = 4;
+    ExtendedPath resultsPath = 5;
+    google.protobuf.BoolValue errorOnPathNotFound = 6;
+  }
+
+  message Offset {
+    string offsetParam = 1;
+    string limitParam = 2;
+    google.protobuf.Int32Value maxLimit = 3;
+    ExtendedPath resultsPath = 5;
+    google.protobuf.BoolValue errorOnPathNotFound = 6;
+  }
+
+  message NextUrl {
+    ExtendedPath nextUrlPath = 1;
+    string limitParam = 2;
+    google.protobuf.Int32Value maxLimit = 3;
+    ExtendedPath resultsPath = 5;
+    google.protobuf.BoolValue errorOnPathNotFound = 6;
+  }
+
+  message Unpaginated {
+    ExtendedPath resultsPath = 1;
+    google.protobuf.BoolValue errorOnPathNotFound = 2;
+  }
+
+  oneof value {
+    MultiCursor multiCursor = 2;
+    PageOffset pageOffset = 3;
+    Offset offset = 4;
+    NextUrl nextUrl = 5;
+    Unpaginated unpaginated = 1;
+  }
+}
+
+message Parameter {
+  enum InType {
+    IN_TYPE_NONE = 0;
+    QUERY = 1;
+    HEADER = 2;
+    PATH = 3;
+    COOKIE = 4;
+    HEADERS = 5;
+  }
+
+  enum StyleType {
+    STYLE_TYPE_NONE = 0;
+    MATRIX = 1;
+    LABEL = 2;
+    FORM = 3;
+    SIMPLE = 4;
+    SPACEDELIMITED = 5;
+    PIPEDELIMITED = 6;
+    DEEPOBJECT = 7;
+    AWS_QUERY_LIST = 8;
+    AWS_QUERY_MAP = 9;
+  }
+
+  string name = 1;
+  string description = 2;
+  bool required = 3;
+  Schema schema = 4;
+  InType in = 5;
+  StyleType style = 6;
+  bool explode = 7;
+  string defaultValue = 8;
+}
+
+message RequestBody {
+  bool required = 1;
+  map<string, MediaType> content = 2;
+  string description = 3;
+  google.protobuf.StringValue defaultEmptyBody = 4; // This is a string serialized json node
+}
+
+message ApiResponses {
+  ApiResponse default = 1;
+  map<string, ApiResponse> apiResponses = 2;
+}
+
+message ApiResponse {
+  map<string, MediaType> content = 1;
+}
+
+message MediaType {
+  message AwsEncoding {
+    string awsItemPrefix = 1;
+    bool awsItemIndexBeforeFieldName = 2;
+  }
+
+  message Encoding {
+    Parameter.StyleType styleType = 1;
+    bool explode = 2;
+  }
+  Schema schema = 1;
+  map<string, Encoding> propertiesEncoding = 2; // map from property name to encoding details
+}
+
+message Schema {
+  oneof value {
+    string ref = 1;
+    SchemaObject schemaObject = 2;
+    ComposedSchema allOf = 3;
+    ComposedSchema anyOf = 4;
+    ComposedSchema oneOf = 5;
+  }
+}
+
+message SchemaObject {
+  message SchemaObjectDefault {
+    oneof default {
+      string defaultString = 1;
+      double defaultNumber = 2;
+      int64 defaultInteger = 3;
+      bool defaultBoolean = 4;
+    }
+  }
+
+  message AdditionalProperties {
+    oneof type {
+      bool boolean = 1;
+      Schema schema = 2;
+    }
+  }
+
+  enum SchemaType {
+    SCHEMA_TYPE_NONE = 0;
+    STRING = 1;
+    NUMBER = 2;
+    INTEGER = 3;
+    BOOLEAN = 4;
+    OBJECT = 5;
+    ARRAY = 6;
+  }
+
+  SchemaType type = 1;
+  SchemaObjectDefault default = 2;
+
+  repeated string required = 3;
+  map<string, Schema> properties = 4;
+  Schema items = 5;
+  NullableInt32 maxItems = 6;
+  repeated string possibleValues = 7;
+  string format = 8;
+  string description = 9;
+  AdditionalProperties additionalProperties = 10;
+  string name = 11;
+}
+
+message ComposedSchema {
+  repeated Schema schema = 1;
+  Discriminator discriminator = 2;
+}
+
+message Discriminator {
+  string propertyName = 1;
+} 
+
+message NullableInt32 {
+  int32 value = 1;
+}
+
+//==================================================
+// PARAMETERS
+//==================================================
+
+message CommonParameter {
+  enum ParameterType {
+    UNSET = 0;
+    STRING = 1;
+    INTEGER = 2;
+    NUMBER = 3;
+    BOOLEAN = 4;
+    OBJECT = 5;
+    ARRAY = 6;
+  }
+}
+
+message OperationParameter {
+  string name = 1;
+  string description = 2;
+  CommonParameter.ParameterType type = 4;
+  bool required = 5;
+  string prettyName = 6;
+}
+
+message McOperationParameter {
+  string name = 1;
+  string description = 2;
+  CommonParameter.ParameterType type = 3;
+  string prettyName = 4;
+}
+
+//==================================================
+// MANIFEST DEFINITIONS 
+//==================================================
+
+message VersionedServiceTree {
+
+  message V1 {
+    reserved 1;
+    ServiceManifest manifest = 2;
+    repeated ServiceResource resources = 3;
+    CommonApi commonApi = 4;
+  }
+
+  oneof version {
+    V1 v1 = 1;
+  }
+}
+
+message ServiceResource {
+  string relativePath = 1;
+  string content = 2;
+}
+
+
+message ServiceManifest {
+  oneof value {
+    ServiceManifestLatest v2 = 2;
+  }
+}
+
+message ServiceManifestLatest {
+  message OAuthConfig {
+    string name = 1;
+    string authUri = 2;
+    string accessTokenUri = 3;
+    string responseType = 4;
+    string accessType = 5;
+    string prompt = 6;
+    string oauthDocumentation = 7;
+    string accessTokenMethod = 8;
+    string scope = 9;
+    ParameterLocation parameterLocation = 10;
+
+    bool needsBasicAuthHeader = 11;
+    string accessTokenPath = 12;
+
+    string enableGroupCredentials = 13;
+
+    string audience = 14;
+
+    enum ParameterLocation {
+      QUERY = 0;
+      BODY = 1;
+    }
+  }
+
+  oneof value {
+    // These names must match the names in ServiceType (in service.proto)
+    SwaggerService swagger = 1;
+    ActionService action = 3;
+    APIWrappedService apiWrapped = 8;
+    SimpleCodeService simpleCode = 9;
+    ScriptedAction scriptedAction = 10;
+  }
+
+  string description = 4;
+  string displayName = 5;
+}
+
+message SwaggerService {
+  message ServiceAuth {
+    enum Type {
+      UNSET = 0;
+      HEADER = 1;
+      OAUTH = 2; // authorization code flow
+      PARAMETER = 4;
+      PATH = 7;
+      BASIC = 9;
+      MULTIHEADER = 11;
+    }
+
+    message MultiHeaderAuth {
+      repeated string strings = 1;
+    }
+
+    message AuthParam {
+      oneof value {
+        string string = 1;
+        MultiHeaderAuth multiHeaderAuth = 4;
+      }
+    }
+
+    Type type = 1;
+
+    map<string, AuthParam> params = 2;
+    oneof config {
+      ServiceManifestLatest.OAuthConfig oauthConfig = 3;
+    }
+    bool authSettingsRequired = 6;
+    string description = 7;
+  }
+
+  ServiceAuth auth = 1;
+  string source = 2;
+  string url = 3;
+
+  repeated ConfigFieldMetadata additionalConfigs = 5;
+  map<string, string> serverVariables = 6;
+}
+
+message ConfigFieldMetadata {
+  string fieldKey = 1;
+  string name = 4;
+}
+
+
+message ActionService {
+  message ActionOperation {
+    string id = 1;
+    string description = 2;
+    oneof value {
+      FunctionOperation function = 3;
+    }
+  }
+
+  repeated ActionOperation operations = 2;
+
+  string source = 7;
+}
+
+message SwaggerOverrides {
+  oneof authOverrides {
+    ServiceManifestLatest.OAuthConfig oauthConfig = 1;
+  }
+  string baseUrl = 4;
+  map<string, string> serverVariables = 6;
+}
+
+message FunctionOperation {
+  repeated OperationParameter parameters = 2;
+
+  oneof code {
+    string js = 3; 
+  }
+  string lang = 5;
+  repeated McOperationParameter outputs = 6;
+}
+
+//==================================================
+// SCRIPTS CHAIN ITEMS
+//==================================================
+
+message ChainItem {
+  oneof item {
+    Action action = 1;
+    ActivityFieldOperation fieldOperation = 2;
+    Conditional conditional = 3;
+    ServiceGroupFieldOperation serviceGroupFieldOperation = 7;
+    ForEach forEach = 8;
+  }
+  string id = 4;
+  string prettyName = 5;
+}
+
+message ServiceId {
+  string name = 1;
+  string maintainer = 2;
+  string tag = 3;
+}
+
+message Action {
+  oneof payload {
+    ServiceId app = 1;
+    APIWrappedService apiWrapped = 4;
+    SimpleCodeService simpleCode = 5;
+  }
+  repeated ActionParam inputs = 2;
+}
+
+message ActivityFieldOperation {
+  string fieldId = 1;
+  google.protobuf.StringValue value = 2;
+}
+
+message Conditional {
+  string condition = 1;
+  repeated ChainItem chainItems = 2;
+  ConditionalVersion conditionalVersion = 3;
+}
+
+message ServiceGroupFieldOperation {
+  string fieldId = 1;
+  google.protobuf.StringValue value = 2;
+}
+
+message ActionParam {
+  reserved 6;
+  string name = 1;
+  string prettyName = 2;
+  string description = 3;
+  CommonParameter.ParameterType type = 4;
+  string value = 5;
+}
+
+enum ConditionalVersion {
+  VERSION_RULES = 0;
+}
+
+message ForEach {
+  string inputValue = 1; 
+  repeated ChainItem chainItems = 2;
+}
+
+message OutputSelector {
+  string name = 1;
+  string jmesPathSelector = 2;
+}
+
+message APIWrappedService {
+  message OpenAIGenerator {
+    string prompt = 1;
+    string outputsPrompt = 2;
+  }
+
+  message Parameter {
+    OperationParameter param = 1;
+    string apiParamName = 2;
+  }
+
+  string connectorId = 1;
+  string connectorOperation = 2;
+  repeated Parameter inputs = 3;
+  repeated OutputSelector outputSelectors = 4;
+  OpenAIGenerator openAIGenerator = 5;
+}
+
+message CodeResource {
+  enum Language {
+    UNSET = 0;
+    JAVASCRIPT = 1;
+    PYTHON = 2;
+  }
+  oneof value {
+    string codeString = 1;
+    string resourcePath = 2; 
+  }
+  Language language = 3;
+}
+
+message SimpleCodeService {
+  repeated OperationParameter inputs = 1;
+  repeated McOperationParameter outputs = 2;
+  CodeResource code = 3;
+}
+
+message ScriptedAction {
+  message Param {
+    McOperationParameter param = 1;
+    string mustacheTemplate = 2;
+  }
+  repeated OperationParameter inputs = 1;
+  repeated Param outputs = 2;
+  repeated ChainItem chainItems = 3;
+  repeated ChainItem errorChainItems = 4;
+}

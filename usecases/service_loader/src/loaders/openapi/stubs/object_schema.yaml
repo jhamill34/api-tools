@@ -1,0 +1,21 @@
+openapi: 3.0.1
+servers:
+  - url: https://example.com
+paths:
+    /hello:
+      get:
+        operationId: say_hello
+        parameters:
+        - in: header
+          name: Version
+          schema:
+            type: object
+            properties:
+                foo:
+                    type: number
+                bar:
+                    type: object 
+                    properties:
+                        baz:
+                            type: string 
+                     

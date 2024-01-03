@@ -1,0 +1,135 @@
+name: Rust Build
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+    tags: ["v*.*.*"]
+    
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test
+    runs-on: macos-latest
+    steps: 
+      - name: Checkout 
+        uses: actions/checkout@v3
+      - name: Cache
+        uses: actions/cache@v2
+        with: 
+          path: | 
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+        with: 
+          repo-token: ${{ github.token }}
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install Python
+        shell: bash 
+        run: |
+          ./get-python.sh 
+        
+      - name: Format Check
+        uses: actions-rs/cargo@v1
+        with: 
+          command: fmt
+          args: --all -- --check
+      
+      - name: Clippy Check
+        uses: actions-rs/cargo@v1
+        with: 
+          command: clippy
+        
+      - name: Testing
+        uses: actions-rs/cargo@v1
+        with: 
+          command: test
+  
+  deploy:
+    name: deploy
+    runs-on: ${{ matrix.os }}
+    needs: [test]
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            
+    steps:
+      - name: Checkout 
+        uses: actions/checkout@v3
+      - name: Cache
+        uses: actions/cache@v2
+        with: 
+          path: | 
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+        with: 
+          repo-token: ${{ github.token }}
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+      - name: Install Python
+        shell: bash 
+        run: |
+          ./get-python.sh ${{ matrix.target }}
+      
+      - name: Build Daemon
+        uses: actions-rs/cargo@v1
+        env: 
+          PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }} -p transpositd
+
+      - name: Build CLI
+        uses: actions-rs/cargo@v1
+        env: 
+          PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }} -p tpcli
+      
+      - name: Package
+        shell: bash 
+        run: |
+          ./package.sh ${{ github.ref_name }} ${{ matrix.target }}
+          
+      - name: Publish
+        uses: softprops/action-gh-release@v1
+        # TODO: if any of the build step fails, the release should be deleted.
+        with:
+            files: 'dist/tpcli*'
+          
+          
+      
+  

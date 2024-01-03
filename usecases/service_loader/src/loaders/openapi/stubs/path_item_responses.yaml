@@ -1,0 +1,15 @@
+openapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+    /hello/{world}:
+        get: 
+            operationId: say_hello
+            responses:
+                '200':
+                    description: Say your thing
+                    headers: 
+                        'X-API':
+                            description: API Thing
+                    content: 
+                        'application/json': {}

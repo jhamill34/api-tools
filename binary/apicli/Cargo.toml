@@ -1,0 +1,41 @@
+[package]
+name = "apicli"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dotenv = "0.15"
+clap = { version = "4.2", features = [ "derive" ] }
+tonic = "0.9"
+prost = "0.11"
+tokio = { version = "1", features = [ "full" ] }
+protobuf = "3.2"
+protobuf-json-mapping = "3.2"
+
+serde = { version = "1.0", features = [ "derive" ] }
+toml = "0.7"
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+tera = "1"
+
+engine_entities = { path = "../../entities/engine" }
+core_entities = { path = "../../entities/core" }
+credential_entities = { path = "../../entities/credentials" }
+common_data_structures = { path = "../../common/data_structures" }
+
+oauth_flow = { path = "../../auth/oauth_flow" }
+
+anyhow = "1.0"
+
+dhat = "0.3.2"
+
+[build-dependencies]
+tonic-build = "0.9"
+
+[features]
+dhat-heap = []
+dhat-ad-hoc = []
+

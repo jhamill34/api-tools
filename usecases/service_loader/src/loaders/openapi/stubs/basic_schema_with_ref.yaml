@@ -1,0 +1,17 @@
+openapi: 3.0.1
+servers: 
+  - url: "https://example.com"
+paths:
+    /hello:
+      get:
+        operationId: say_hello
+        parameters:
+        - in: header
+          name: Version
+          schema:
+            $ref: '#/components/schemas/Version'
+
+components:
+    schemas:
+        Version:
+            type: string

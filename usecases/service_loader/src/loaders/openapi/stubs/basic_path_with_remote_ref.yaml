@@ -1,0 +1,10 @@
+penapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+    /hello/{world}:
+        $ref: '#/components/paths/Hello'
+components:
+    paths:
+        Hello:
+            $ref: 'https://example.com/json#/components/paths/World'

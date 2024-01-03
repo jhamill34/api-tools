@@ -1,0 +1,21 @@
+openapi: 3.0.1
+
+servers:
+  - url: "https://example.com"
+paths:
+    /hello:
+      get:
+        operationId: say_hello
+        parameters:
+          - $ref: '#/components/parameters/Version'
+
+      post:
+        operationId: post_hello
+        parameters:
+          - $ref: '#/components/parameters/Version'
+
+components:
+    parameters:
+        Version:
+          in: header
+          name: Version

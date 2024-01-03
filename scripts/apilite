@@ -1,0 +1,109 @@
+#!/bin/bash
+
+while getopts "fn:hr" opt; do
+  case $opt in
+    f)
+		force=1
+        ;;
+	n) 
+		selected=${OPTARG}
+		;;
+	h)
+		history=1
+		;;
+	r) 
+		required=1
+		;;
+  esac
+done
+
+CACHE_DIR=$HOME/.apilite
+
+if [[ ! -d $HOME/.apilite ]]; then
+	mkdir -p $CACHE_DIR
+fi 
+
+if [ ! -z $history ]; then 
+	selected=$(tac $CACHE_DIR/history | fzf)
+elif [ -z $selected ]; then
+	selected=$(apicli list | fzf | cut -d ' ' -f 2)
+fi
+
+if [ -z $selected ]; then 
+	echo "Nothing selected"
+	echo "Aborting..."
+	exit 1;
+fi
+
+echo "Selected: $selected"
+read -p 'Continue? [Yn] ' cont
+
+if [ -z $cont ]; then 
+	cont='Y'
+fi
+
+if [ $cont != 'Y' ]; then
+	echo 'Aborting...'
+	exit 1
+fi
+
+input_file=$CACHE_DIR/${selected}.json
+if [ ! -f $input_file ] || [ ! -z $force ]; then
+	if [ -z $required ]; then 
+		apicli input-stub $selected > $input_file
+	else 
+		apicli input-stub $selected -r > $input_file
+	fi
+fi
+
+$EDITOR $input_file
+
+read -p "Execute action? $selected [Yn] " cont
+if [ -z $cont ]; then
+	cont='Y'
+fi
+
+if [ $cont != 'Y' ]; then
+	echo 'Aborting...'
+	exit 1
+fi
+
+read -p "Limit? " limit 
+if [ -z $limit ]; then
+	limit=0
+fi
+
+id=$(apicli run $selected -l $limit < $input_file)
+
+status=$(apicli run-status $id)
+while [ "$status" != "Completed" ]
+do 
+	if [ "$status" == "Waiting" ]; then
+		apicli run-result $id | jq 
+
+		read -p "Provide Input? [Yn] " cont
+		if [ -z $cont ]; then
+			cont='Y'
+		fi
+
+		if [ $cont != 'Y' ]; then
+			echo 'Aborting...'
+			exit 1
+		fi
+
+		input_file=$CACHE_DIR/${selected}-input.json
+		$EDITOR $input_file
+
+		apicli provide-input $id < $input_file
+	fi
+
+	sleep 1;
+	status=$(apicli run-status $id)
+done
+
+apicli run-result $id | jq 
+
+if ! grep -q "$selected" $CACHE_DIR/history; then 
+	echo "$selected" >> $CACHE_DIR/history
+fi
+

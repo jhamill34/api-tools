@@ -1,0 +1,11 @@
+[oauth]
+base_uri = "https://apicli.localhost:8000"
+cert_path = "/usr/local/apicli/apicli.localhost.pem"
+key_path = "/usr/local/apicli/apicli.localhost-key.pem"
+
+[template]
+path = "/usr/local/apicli/templates"
+
+[client]
+port = 50051
+host = "localhost"

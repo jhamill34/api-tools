@@ -1,0 +1,15 @@
+openapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+    /hello/{world}:
+        $ref: '#/components/paths/Hello'
+components:
+    paths:
+        Hello:
+            $ref: '#/components/paths/World'
+
+        World:
+            description: Example description
+            get:
+              operationId: say_hello

@@ -1,0 +1,75 @@
+#!/bin/bash 
+#
+while getopts "t:n:cr" opt; do
+  case $opt in
+    t)
+		template_type=${OPTARG}
+        ;;
+	n) 
+		name=${OPTARG}
+		;;
+	c)
+		create=${OPTARG}
+		;;
+	r) 
+		required=1
+  esac
+done
+
+selected_api=$(apicli list | fzf | cut -d ' ' -f 2)
+
+echo "Selected: $selected_api"
+echo "Next select input paths"
+read -p 'Continue? [Yn] ' cont
+
+if [ -z $cont ]; then 
+	cont='Y'
+fi
+
+if [ $cont != 'Y' ]; then
+	echo 'Aborting...'
+	exit 1
+fi
+
+
+inputs_file=$(mktemp)
+
+if [ -z $required ]; then
+	apicli input-paths $selected_api | fzf -m | sed 's/^\(.\)/? -> \1/g' > $inputs_file
+else
+	apicli input-paths $selected_api -r | fzf -m | sed 's/^\(.\)/? -> \1/g' > $inputs_file
+fi
+
+echo "Next select output paths"
+read -p 'Continue? [Yn] ' cont
+
+if [ -z $cont ]; then 
+	cont='Y'
+fi
+
+if [ $cont != 'Y' ]; then
+	echo 'Aborting...'
+	exit 1
+fi
+
+apicli output-paths $selected_api | fzf -m | sed 's/^\(.\)/? <- \1/g' >> $inputs_file
+
+echo "Next Create Template Mappings and/or make adjustments."
+echo "Replace ? with your mapped name."
+read -p 'Continue? [Yn] ' cont
+
+if [ -z $cont ]; then 
+	cont='Y'
+fi
+
+if [ $cont != 'Y' ]; then
+	echo 'Aborting...'
+	exit 1
+fi
+
+$EDITOR $inputs_file
+
+# Generate template
+
+apicli generate $template_type $name $selected_api < $inputs_file
+

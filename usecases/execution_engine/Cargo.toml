@@ -1,0 +1,18 @@
+[package]
+name = "execution_engine"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+protobuf = "3.2"
+serde_json = "1.0"
+chrono = { version = "0.4.24" }
+
+core_entities = { path = "../../entities/core" }
+credential_entities = { path = "../../entities/credentials" }
+
+thiserror = "1.0"
+anyhow = "1.0"
+

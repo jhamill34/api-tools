@@ -1,0 +1,8 @@
+#!/bin/bash 
+
+curl -X POST \
+	-H "Content-Type: application/yaml" \
+	-H "Accept: application/yaml" \
+	--data-binary $1 \
+	https://converter.swagger.io/api/convert 
+

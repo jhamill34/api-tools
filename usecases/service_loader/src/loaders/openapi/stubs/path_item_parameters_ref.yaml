@@ -1,0 +1,16 @@
+openapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+  /hello/{world}:
+    get:
+      operationId: say_hello
+      parameters: 
+        - $ref: '#/components/parameters/Hello'
+
+components:
+  parameters:
+    Hello:
+      in: header
+      name: Version
+      deprecated: true

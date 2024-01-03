@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package engine;
+
+service Engine {
+	rpc List(ListRequest) returns (ListResponse);
+	rpc GetService(GetSerivceRequest) returns (GetServiceResponse);
+	rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse); 
+	rpc RunService(RunServiceRequest) returns (RunServiceResponse);
+	rpc GetRunResult(GetRunResultRequest) returns (GetRunResultResponse);
+	rpc ProvideInput(ProvideInputRequest) returns (ProvideInputResponse);
+}
+
+message ListRequest { }
+
+message ListResponse {
+	message ListItem {
+		string name = 1;
+	}
+
+	repeated ListItem items = 1;
+}
+
+message GetSerivceRequest {
+	string name = 1;
+}
+
+message GetServiceResponse {
+	bytes raw_service = 1;
+	optional bytes raw_credentials = 2;
+}
+
+message SaveServiceRequest {
+	string name = 1;
+	optional bytes raw_service = 2;
+	optional bytes raw_credentials = 3;
+}
+
+message SaveServiceResponse {}
+
+message RunServiceRequest {
+	string id = 1;
+	string input = 2;
+	optional int32 limit = 3;
+	optional string execution_id = 4;
+}
+
+message RunServiceResponse {
+	string execution_id = 1;
+}
+
+message GetRunResultRequest {
+	string execution_id = 1;
+}
+
+message GetRunResultResponse {
+	enum STATUS {
+		NOT_FOUND = 0;
+		RUNNING = 1;
+		COMPLETED = 2;
+		ERROR = 3;
+		WAITING = 4;
+	}
+
+	STATUS status = 5;
+	optional string output = 6;
+}
+
+message ProvideInputRequest {
+	string execution_id = 1;
+	string input = 2;
+}
+
+message ProvideInputResponse {}
+

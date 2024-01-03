@@ -1,0 +1,10 @@
+components:
+    paths:
+        World:
+            $ref: '#/components/paths/Hello'
+
+        Hello:
+            description: Example remote 
+            get: 
+              operationId: say_hello
+            

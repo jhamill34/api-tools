@@ -1,0 +1,8 @@
+openapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+  /hello:
+    description: "Test"
+    get:
+      operationId: say_hello

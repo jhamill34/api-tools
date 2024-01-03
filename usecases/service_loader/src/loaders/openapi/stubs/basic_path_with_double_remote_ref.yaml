@@ -1,0 +1,9 @@
+openapi: 3.0.1
+servers:
+  - url: "https://example.com"
+paths:
+    /hello/{world}:
+        $ref: './test.json#/components/paths/Hello'
+
+    /hello:
+        $ref: './test.json#/components/paths/Hello'

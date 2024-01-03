@@ -1,0 +1,34 @@
+[profile.release]
+debug = true
+
+[workspace]
+members = [
+	# Main Binary (crates outside of binary should be libraries)
+	"binary/apid",
+	"binary/apicli",
+
+	# Data types that we will be passing around
+	"entities/credentials",
+	"entities/core",
+	"entities/engine",
+	
+	# Implementations of application logic
+	"usecases/service_loader",
+	"usecases/execution_engine",
+	"usecases/service_writer", 
+
+	# Implementations of execution_engine output port
+	"runners/api_caller",
+	"runners/python_runner",
+	"runners/javascript_runner",
+	"runners/user_input",
+	"runners/filtered_runner",
+
+	# Implementations of service_loader output ports
+	"storage/in_memory_storage",
+	"storage/local_file_loader",
+
+	"common/data_structures",
+
+	"auth/oauth_flow",
+]

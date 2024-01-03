@@ -1,0 +1,24 @@
+openapi: 3.0.1
+servers:
+  - url: https://example.com
+paths:
+    /hello/{world}:
+        get: 
+            operationId: say_hello
+            responses:
+                '200':
+                    $ref: '#/components/responses/Hello'
+components:
+    responses:
+        Hello:
+            description: Say your thing
+            headers: 
+                'X-API':
+                    $ref: '#/components/headers/API'
+
+            content: 
+                'application/json': {}
+    headers:
+        API:
+            description: API Thing
+        
