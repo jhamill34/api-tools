@@ -74,7 +74,7 @@ pub fn load_service<R: io::Read>(
 
     let mut tree = VersionedServiceTree::new();
 
-    let mut v1 = tree.mut_v1();
+    let v1 = tree.mut_v1();
     v1.manifest = protobuf::MessageField::some(manifest);
 
     if !only_manifest {
