@@ -109,7 +109,7 @@ jobs:
           PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
         with:
           command: build
-          args: --release --target ${{ matrix.target }} -p transpositd
+          args: --release --target ${{ matrix.target }} -p apid
 
       - name: Build CLI
         uses: actions-rs/cargo@v1
@@ -117,7 +117,7 @@ jobs:
           PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
         with:
           command: build
-          args: --release --target ${{ matrix.target }} -p tpcli
+          args: --release --target ${{ matrix.target }} -p apicli
       
       - name: Package
         shell: bash 
@@ -128,7 +128,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         # TODO: if any of the build step fails, the release should be deleted.
         with:
-            files: 'dist/tpcli*'
+            files: 'dist/apicli*'
           
           
       
