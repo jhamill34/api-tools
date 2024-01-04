@@ -80,8 +80,12 @@ fn find_results<'item>(
                     format!("/{path}")
                 };
 
-                let path = path.parse::<jsonptr::Pointer>()?;
-                path.resolve(result)?
+                if path == "/" {
+                    result
+                } else {
+                    let path = path.parse::<jsonptr::Pointer>()?;
+                    path.resolve(result)?
+                }
             }
             &core_entities::service::pagination::Value::MultiCursor(ref cursor) => {
                 let path = cursor.resultsPath.jmesPath();
@@ -95,8 +99,12 @@ fn find_results<'item>(
                     format!("/{path}")
                 };
 
-                let path = path.parse::<jsonptr::Pointer>()?;
-                path.resolve(result)?
+                if path == "/" {
+                    result
+                } else {
+                    let path = path.parse::<jsonptr::Pointer>()?;
+                    path.resolve(result)?
+                }
             }
             &core_entities::service::pagination::Value::Offset(ref offset) => {
                 let path = offset.resultsPath.jmesPath();
@@ -110,8 +118,12 @@ fn find_results<'item>(
                     format!("/{path}")
                 };
 
-                let path = path.parse::<jsonptr::Pointer>()?;
-                path.resolve(result)?
+                if path == "/" {
+                    result
+                } else {
+                    let path = path.parse::<jsonptr::Pointer>()?;
+                    path.resolve(result)?
+                }
             }
             &core_entities::service::pagination::Value::Unpaginated(ref unpaginated) => {
                 let path = unpaginated.resultsPath.jmesPath();
@@ -125,8 +137,12 @@ fn find_results<'item>(
                     format!("/{path}")
                 };
 
-                let path = path.parse::<jsonptr::Pointer>()?;
-                path.resolve(result)?
+                if path == "/" {
+                    result
+                } else {
+                    let path = path.parse::<jsonptr::Pointer>()?;
+                    path.resolve(result)?
+                }
             }
             &core_entities::service::pagination::Value::NextUrl(_) | &_ => result,
         }

@@ -111,7 +111,7 @@ cat $output | jq
 read -p "JQ Filter? " filter
 while [ ! -z $filter ]
 do
-	cat $output | jq $filter
+	cat $output | jq "$filter"
 	read -p "JQ Filter? ($filter) " filter
 done
 
