@@ -74,6 +74,7 @@ if [ -z $limit ]; then
 fi
 
 id=$(apicli run $selected -l $limit < $input_file)
+echo "Run ID: $id"
 
 status=$(apicli run-status $id)
 while [ "$status" != "Completed" ]
@@ -101,7 +102,18 @@ do
 	status=$(apicli run-status $id)
 done
 
-apicli run-result $id | jq 
+outputdir=$(mktemp -d)
+output="${outputdir}/${id}.json"
+touch $output
+apicli run-result $id > $output
+
+cat $output | jq 
+read -p "JQ Filter? " filter
+while [ ! -z $filter ]
+do
+	cat $output | jq $filter
+	read -p "JQ Filter? ($filter) " filter
+done
 
 if ! grep -q "$selected" $CACHE_DIR/history; then 
 	echo "$selected" >> $CACHE_DIR/history
