@@ -382,6 +382,8 @@ message SwaggerService {
 
 message ConfigFieldMetadata {
   string fieldKey = 1;
+  bool required = 2;
+  string description = 3;
   string name = 4;
 }
 
