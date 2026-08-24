@@ -1,6 +1,8 @@
 #!/bin/bash
 
-cargo install pyoxidizer || true
+if ! command -v pyoxidizer >/dev/null 2>&1; then
+	cargo install pyoxidizer
+fi
 
 if [ -z "$1" ]; then
 	pyoxidizer generate-python-embedding-artifacts \
