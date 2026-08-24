@@ -12,8 +12,6 @@ pub async fn route(
 ) -> Result<(), error::CallbackResponse> {
     let client = reqwest::Client::new();
 
-    let creds = &env.creds;
-
     let service = &env.service;
     let service = service.v1().manifest.v2();
 
@@ -32,7 +30,7 @@ pub async fn route(
     let oauth_config = service.oauthConfig();
 
     let (client_id, client_secret) = {
-        let creds = creds.lock().unwrap();
+        let creds = env.lock_creds();
         if !creds.has_oauth() {
             return Err(error::CallbackResponse::BadRequest(
                 "Connector doesn't use Oauth".to_string(),
@@ -102,7 +100,7 @@ pub async fn route(
     })?;
 
     {
-        let mut creds = creds.lock().unwrap();
+        let mut creds = env.lock_creds();
         let creds = creds.mut_oauth();
         creds.accessToken = access_token.as_string().cloned();
     }
