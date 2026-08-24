@@ -9,4 +9,4 @@ edition = "2021"
 service_loader = { path = "../../usecases/service_loader" }
 service_writer = { path = "../../usecases/service_writer" }
 
-thiserror = "1.0"
+thiserror = { workspace = true }

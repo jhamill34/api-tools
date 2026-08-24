@@ -6,13 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-protobuf = "3.2"
-serde_json = "1.0"
-chrono = { version = "0.4.24" }
+protobuf = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
 
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 
-thiserror = "1.0"
-anyhow = "1.0"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 

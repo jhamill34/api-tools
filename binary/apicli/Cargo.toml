@@ -6,18 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dotenv = "0.15"
+dotenv = { workspace = true }
 clap = { version = "4.2", features = [ "derive" ] }
-tonic = "0.9"
-prost = "0.11"
-tokio = { version = "1", features = [ "full" ] }
-protobuf = "3.2"
-protobuf-json-mapping = "3.2"
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+protobuf = { workspace = true }
+protobuf-json-mapping = { workspace = true }
 
-serde = { version = "1.0", features = [ "derive" ] }
-toml = "0.7"
-serde_json = "1.0"
-serde_yaml = "0.9"
+serde = { workspace = true }
+toml = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 
 tera = "1"
 
@@ -28,12 +28,12 @@ common_data_structures = { path = "../../common/data_structures" }
 
 oauth_flow = { path = "../../auth/oauth_flow" }
 
-anyhow = "1.0"
+anyhow = { workspace = true }
 
-dhat = "0.3.2"
+dhat = { workspace = true }
 
 [build-dependencies]
-tonic-build = "0.9"
+tonic-build = { workspace = true }
 
 [features]
 dhat-heap = []
