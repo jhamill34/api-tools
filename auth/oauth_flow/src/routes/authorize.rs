@@ -7,7 +7,7 @@ use crate::{error, structs};
 
 #[get("/oauth/authorize")]
 pub fn route(env: &State<structs::EnvironmentState>) -> Result<Redirect, error::CallbackResponse> {
-    let creds = &env.creds.lock().unwrap();
+    let creds = &env.lock_creds();
 
     let service = &env.service;
     let service = service.v1().manifest.v2();
