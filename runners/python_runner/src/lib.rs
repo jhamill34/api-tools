@@ -24,7 +24,6 @@ mod bindings;
 mod constants;
 mod converters;
 pub mod error;
-mod pyconf;
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -88,11 +87,9 @@ impl PyActionRunner {
                 |cap| cap.as_str().to_owned(),
             );
 
-        let config = pyconf::default_python_config();
-        let interp = pyembed::MainPythonInterpreter::new(config)
-            .map_err(|_e| error::PyActionRunner::NotFound("Interpretter".into()))?;
+        pyo3::prepare_freethreaded_python();
 
-        interp.with_gil(|py| -> error::Result<Value> {
+        Python::with_gil(|py| -> error::Result<Value> {
             let output = PyDict::new(py);
 
             let api = bindings::APIBindingWraper {
@@ -183,5 +180,43 @@ impl CodeRunner for PyActionRunner {
     ) -> execution_engine::error::Result<Value> {
         let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pyo3::types::PyModule;
+    use pyo3::Python;
+    use serde_json::json;
+
+    use crate::converters;
+
+    // Exercises the same interpreter-init + module-from-source + call +
+    // JSON round-trip pattern run_internal uses, without needing the full
+    // execution_engine::Engine graph. Guards the pyembed -> plain pyo3
+    // switch: this must keep working dynamically linked against whatever
+    // libpython PYO3_PYTHON/LD_LIBRARY_PATH point at (see issue #35).
+    #[test]
+    fn runs_a_simple_python_function_and_round_trips_json() {
+        pyo3::prepare_freethreaded_python();
+
+        let result = Python::with_gil(|py| -> pyo3::PyResult<serde_json::Value> {
+            let input = converters::from_value(py, json!({"name": "world"}))?;
+
+            let module = PyModule::from_code(
+                py,
+                "def execute(input):\n    return {'greeting': 'hello ' + input['name']}\n",
+                "test_module",
+                "test_module",
+            )?;
+
+            let func = module.getattr("execute")?;
+            let returned = func.call1((input,))?;
+
+            converters::from_py(returned)
+        })
+        .expect("python execution should succeed");
+
+        assert_eq!(result, json!({"greeting": "hello world"}));
     }
 }

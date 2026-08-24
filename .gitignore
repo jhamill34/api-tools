@@ -3,5 +3,3 @@ target
 .env
 .idea
 dist/
-
-pyembedded

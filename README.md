@@ -8,22 +8,13 @@
 
 ## Installing
 
-### Homebrew 
+### APICLI (Homebrew)
 
 Make sure [brew](https://brew.sh/) is installed.
 
 ```
 brew tap jhamill34/tools 
 brew install apicli
-```
-
-Homebrew should do most of the configuration for you. To start `apid` in the background
-edit `$(brew --prefix apicli)/apid-config.toml` and change `connector.path` to the location 
-you keep your local connectors. 
-
-Then just run:
-```
-brew services start apicli
 ```
 
 (Recommended) To use `apicli` copy the installed default config to `$HOME/.apicli/config.toml`
@@ -39,10 +30,37 @@ or set the `APICLI_CONFIG_PATH` environment variable
 export APICLI_CONFIG_PATH=$(brew --prefix apicli)/apicli-config.toml
 ```
 
+### API Daemon (Docker)
+
+`apid` is distributed as a container image published to GHCR (previously it ran natively via
+`brew services start apicli` - see [#35](https://github.com/jhamill34/api-tools/issues/35) for why
+that changed):
+
+```
+docker pull ghcr.io/jhamill34/apid:latest
+```
+
+Run it with your connectors directory and a config file mounted in, and port `50051` published so
+`apicli` on the host can reach it:
+
+```
+docker run -d \
+  --name apid \
+  -p 50051:50051 \
+  -v /path/to/your/connectors:/connectors \
+  -v /path/to/apid-config.toml:/etc/apid/config.toml:ro \
+  ghcr.io/jhamill34/apid:latest
+```
+
+In your `apid-config.toml`, set `connector.path` to `/connectors` (matching the volume mount above)
+and keep `server.host` as `0.0.0.0` so the published port actually forwards traffic. See
+`etc/apid-config.toml` in this repo for a starting point.
 
 ### From Source
 
-Building from source requires the [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) toolchain.
+Building from source requires the [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html)
+toolchain. `apid` also needs a Python 3 installation on your machine for `python_runner` to link
+against (e.g. `brew install python@3.12` on macOS, or whatever your Linux distro ships).
 
 ```
 cargo install --path binary/apid --features "javascript, wrapper"
@@ -53,9 +71,10 @@ cargo install --path binary/apicli
 
 ### API Daemon 
 
-> This is done for you if you used homebrew, just edit the `connector.path` value.
+> This is done for you if you followed the Docker instructions above, just edit the `connector.path` value.
 
-Before starting the daemon we need to set the `APID_CONFIG_PATH` environment variable to point to our config file. 
+The daemon reads its config from the path set by the `APID_CONFIG_PATH` environment variable (the
+Docker image defaults this to `/etc/apid/config.toml`, matching the mount path used above).
 
 Example config file: 
 
@@ -64,8 +83,8 @@ Example config file:
 path = "<CHANGE ME>"
 
 [log]
-api_path = "/usr/local/var/log/apid/api.log"
-workflow_path = "/usr/local/var/log/apid/workflow.log"
+api_path = "/var/log/apid/api.log"
+workflow_path = "/var/log/apid/workflow.log"
 
 [server]
 port = 50051
