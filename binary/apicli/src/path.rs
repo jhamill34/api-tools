@@ -446,7 +446,12 @@ mod tests {
     fn populate_parameter_list_does_not_panic_on_an_unrecognized_parameter_type() {
         let mut list = Vec::new();
 
-        populate_parameter_list(&mut list, EnumOrUnknown::from_i32(999), "name", "description");
+        populate_parameter_list(
+            &mut list,
+            EnumOrUnknown::from_i32(999),
+            "name",
+            "description",
+        );
 
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].type_, "UNKNOWN");
@@ -464,7 +469,15 @@ mod tests {
         let mut prefix = vec![];
         let mut list = Vec::new();
 
-        populate_schema_object_list(&mut list, &schema, &types, &mut seen, &mut path, false, &mut prefix);
+        populate_schema_object_list(
+            &mut list,
+            &schema,
+            &types,
+            &mut seen,
+            &mut path,
+            false,
+            &mut prefix,
+        );
 
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].type_, "UNKNOWN");

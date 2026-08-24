@@ -331,10 +331,9 @@ fn handle_parameter(
 ) -> error::Result<()> {
     // TODO: extract into a referece based on a flag
 
-    let in_type = source
-        .in_
-        .enum_value()
-        .map_err(|_| error::ServiceWriter::Unimplemented("Unrecognized parameter location".into()))?;
+    let in_type = source.in_.enum_value().map_err(|_| {
+        error::ServiceWriter::Unimplemented("Unrecognized parameter location".into())
+    })?;
     sink.insert(
         "in".into(),
         in_type.descriptor().name().to_lowercase().into(),
