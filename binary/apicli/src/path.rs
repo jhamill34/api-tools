@@ -82,7 +82,7 @@ pub fn get_input_paths(
                 }
                 populate_parameter_list(
                     &mut input_paths,
-                    param.type_.unwrap(),
+                    param.type_,
                     &param.name,
                     &param.description,
                 );
@@ -164,7 +164,7 @@ pub fn get_output_paths(
             for param in &operation.outputs {
                 populate_parameter_list(
                     &mut output_paths,
-                    param.type_.unwrap(),
+                    param.type_,
                     &param.name,
                     &param.description,
                 );
@@ -215,11 +215,11 @@ impl ParameterPathItem {
 ///
 pub fn populate_parameter_list(
     list: &mut Vec<ParameterPathItem>,
-    param: core_entities::service::common_parameter::ParameterType,
+    param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
     name: &str,
     description: &str,
 ) {
-    match param {
+    match param.enum_value_or_default() {
         core_entities::service::common_parameter::ParameterType::UNSET => {
             list.push(ParameterPathItem::new(
                 name.to_owned(),
@@ -351,7 +351,7 @@ pub fn populate_schema_object_list(
 ) {
     let path_str = path.join("");
     let prefix_str = prefix.join("|");
-    match schema.type_.unwrap() {
+    match schema.type_.enum_value_or_default() {
         core_entities::service::schema_object::SchemaType::SCHEMA_TYPE_NONE => {
             list.push(ParameterPathItem::new(
                 path_str,
@@ -433,5 +433,53 @@ pub fn populate_schema_object_list(
             );
             path.pop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use protobuf::EnumOrUnknown;
+
+    use super::*;
+
+    #[test]
+    fn populate_parameter_list_does_not_panic_on_an_unrecognized_parameter_type() {
+        let mut list = Vec::new();
+
+        populate_parameter_list(
+            &mut list,
+            EnumOrUnknown::from_i32(999),
+            "name",
+            "description",
+        );
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].type_, "UNKNOWN");
+    }
+
+    #[test]
+    fn populate_schema_object_list_does_not_panic_on_an_unrecognized_schema_type() {
+        let schema = core_entities::service::SchemaObject {
+            type_: EnumOrUnknown::from_i32(999),
+            ..Default::default()
+        };
+        let types = HashMap::new();
+        let mut seen = HashMap::new();
+        let mut path = vec!["name".to_owned()];
+        let mut prefix = vec![];
+        let mut list = Vec::new();
+
+        populate_schema_object_list(
+            &mut list,
+            &schema,
+            &types,
+            &mut seen,
+            &mut path,
+            false,
+            &mut prefix,
+        );
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].type_, "UNKNOWN");
     }
 }

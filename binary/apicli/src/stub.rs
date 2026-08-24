@@ -78,13 +78,13 @@ pub fn get_input(
                 if required && !param.required {
                     continue;
                 }
-                let default_value = parameter_to_value(param.type_.enum_value_or_default());
+                let default_value = parameter_to_value(param.type_);
                 input_example.insert(param.name.clone(), default_value);
             }
         }
         &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(ref manifest)) => {
             for param in &manifest.inputs {
-                let default_value = parameter_to_value(param.param.type_.enum_value_or_default());
+                let default_value = parameter_to_value(param.param.type_);
                 input_example.insert(param.param.name.clone(), default_value);
             }
         }
@@ -161,7 +161,7 @@ pub fn get_output(
 
             let mut output_examples = serde_json::Map::new();
             for param in &operation.outputs {
-                let default_value = parameter_to_value(param.type_.unwrap());
+                let default_value = parameter_to_value(param.type_);
                 output_examples.insert(param.name.clone(), default_value);
             }
 
@@ -189,9 +189,9 @@ pub fn get_output(
 
 ///
 pub fn parameter_to_value(
-    param: core_entities::service::common_parameter::ParameterType,
+    param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
 ) -> serde_json::Value {
-    match param {
+    match param.enum_value_or_default() {
         core_entities::service::common_parameter::ParameterType::UNSET => {
             serde_json::Value::String("<UNKNOWN>".to_owned())
         }
@@ -255,7 +255,7 @@ pub fn schema_object_to_value(
     path: &mut Vec<String>,
     is_required: bool,
 ) -> serde_json::Value {
-    match schema.type_.unwrap() {
+    match schema.type_.enum_value_or_default() {
         core_entities::service::schema_object::SchemaType::SCHEMA_TYPE_NONE => {
             serde_json::Value::String("<UNKNOWN>".to_owned())
         }
@@ -299,5 +299,34 @@ pub fn schema_object_to_value(
             path.pop();
             serde_json::Value::Array(items)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use protobuf::EnumOrUnknown;
+
+    use super::*;
+
+    #[test]
+    fn parameter_to_value_does_not_panic_on_an_unrecognized_parameter_type() {
+        let value = parameter_to_value(EnumOrUnknown::from_i32(999));
+
+        assert_eq!(value, serde_json::Value::String("<UNKNOWN>".to_owned()));
+    }
+
+    #[test]
+    fn schema_object_to_value_does_not_panic_on_an_unrecognized_schema_type() {
+        let schema = core_entities::service::SchemaObject {
+            type_: EnumOrUnknown::from_i32(999),
+            ..Default::default()
+        };
+        let types = HashMap::new();
+        let mut seen = HashMap::new();
+        let mut path = vec![];
+
+        let value = schema_object_to_value(&schema, &types, &mut seen, &mut path, false);
+
+        assert_eq!(value, serde_json::Value::String("<UNKNOWN>".to_owned()));
     }
 }
