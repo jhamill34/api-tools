@@ -113,6 +113,25 @@ impl Engine {
         self.input_handler = Some(handler);
     }
 
+    /// Splits a `service.operation` identifier into its two parts, resolving
+    /// a `this` service name against the running context's parent service
+    /// (falling back to the literal `"this"` if there is no parent).
+    fn parse_identifier<'identifier>(
+        identifier: &'identifier str,
+        parent: Option<&'identifier str>,
+    ) -> error::Result<(&'identifier str, &'identifier str)> {
+        let (service_name, operation_name) = identifier
+            .split_once('.')
+            .ok_or_else(|| error::ExecutionEngine::InvalidIdentifier(identifier.into()))?;
+
+        let service_name = match parent {
+            Some(parent) if service_name == "this" => parent,
+            _ => service_name,
+        };
+
+        Ok((service_name, operation_name))
+    }
+
     ///
     /// # Errors
     #[inline]
@@ -137,19 +156,8 @@ impl Engine {
             ));
         }
 
-        let parts: Vec<&str> = identifier.split('.').collect();
-
-        let service_name = parts
-            .first()
-            .ok_or_else(|| error::ExecutionEngine::InvalidIdentifier(identifier.into()))?;
-        let operation_name = parts
-            .get(1)
-            .ok_or_else(|| error::ExecutionEngine::InvalidIdentifier(identifier.into()))?;
-
-        let service_name = match &context.parent {
-            &Some(ref parent) if *service_name == "this" => parent,
-            _ => *service_name,
-        };
+        let (service_name, operation_name) =
+            Self::parse_identifier(identifier, context.parent.as_deref())?;
 
         let (service, credentials) = {
             let lookup = self
@@ -320,5 +328,41 @@ impl Engine {
         logger.write_all(format!("{now} ({action_type}) [{status}] {id}\n").as_bytes())?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_identifier_splits_service_and_operation() {
+        let result = Engine::parse_identifier("myservice.myoperation", None);
+
+        assert!(matches!(result, Ok(("myservice", "myoperation"))));
+    }
+
+    #[test]
+    fn parse_identifier_resolves_this_against_the_parent() {
+        let result = Engine::parse_identifier("this.myoperation", Some("parent_service"));
+
+        assert!(matches!(result, Ok(("parent_service", "myoperation"))));
+    }
+
+    #[test]
+    fn parse_identifier_keeps_the_literal_this_when_there_is_no_parent() {
+        let result = Engine::parse_identifier("this.myoperation", None);
+
+        assert!(matches!(result, Ok(("this", "myoperation"))));
+    }
+
+    #[test]
+    fn parse_identifier_rejects_an_identifier_with_no_dot() {
+        let result = Engine::parse_identifier("noDotHere", None);
+
+        assert!(
+            matches!(result, Err(error::ExecutionEngine::InvalidIdentifier(_))),
+            "expected InvalidIdentifier, got {result:?}"
+        );
     }
 }

@@ -139,31 +139,21 @@ impl FromStr for Reference {
     type Err = error::ServiceLoader;
 
     fn from_str(string: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = string.split('#').collect();
-        let source = parts.first();
-
-        let path = parts
-            .get(1)
+        let (source, path) = string
+            .split_once('#')
             .ok_or_else(|| error::ServiceLoader::NotFound("Json Path Fragment".into()))?;
 
         let path = path.parse::<jsonptr::Pointer>()?;
 
-        if let Some(source) = source {
-            if source.is_empty() {
-                Ok(Self {
-                    path,
-                    type_: ReferenceType::Internal,
-                })
-            } else {
-                Ok(Self {
-                    path,
-                    type_: ReferenceType::External((*source).to_owned()),
-                })
-            }
-        } else {
+        if source.is_empty() {
             Ok(Self {
                 path,
                 type_: ReferenceType::Internal,
+            })
+        } else {
+            Ok(Self {
+                path,
+                type_: ReferenceType::External(source.to_owned()),
             })
         }
     }
@@ -195,5 +185,15 @@ mod test {
             _ => unreachable!(),
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_reference_without_a_fragment_is_rejected() {
+        let result = "https://example.com/json".parse::<Reference>();
+
+        assert!(
+            matches!(result, Err(error::ServiceLoader::NotFound(_))),
+            "expected NotFound, got {result:?}"
+        );
     }
 }
