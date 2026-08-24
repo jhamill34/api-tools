@@ -16,9 +16,9 @@ jobs:
       - name: Checkout 
         uses: actions/checkout@v3
       - name: Cache
-        uses: actions/cache@v2
-        with: 
-          path: | 
+        uses: actions/cache@v4
+        with:
+          path: |
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
@@ -29,35 +29,26 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v2
-        with: 
+        with:
           repo-token: ${{ github.token }}
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
+          components: rustfmt, clippy
 
       - name: Install Python
-        shell: bash 
+        shell: bash
         run: |
-          ./get-python.sh 
-        
+          ./get-python.sh
+
       - name: Format Check
-        uses: actions-rs/cargo@v1
-        with: 
-          command: fmt
-          args: --all -- --check
-      
+        run: cargo fmt --all -- --check
+
       - name: Clippy Check
-        uses: actions-rs/cargo@v1
-        with: 
-          command: clippy
-        
+        run: cargo clippy
+
       - name: Testing
-        uses: actions-rs/cargo@v1
-        with: 
-          command: test
+        run: cargo test
   
   deploy:
     name: deploy
@@ -76,48 +67,41 @@ jobs:
       - name: Checkout 
         uses: actions/checkout@v3
       - name: Cache
-        uses: actions/cache@v2
-        with: 
-          path: | 
+        uses: actions/cache@v4
+        with:
+          path: |
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            ${{ runner.os }}-cargo-
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v2
-        with: 
+        with:
           repo-token: ${{ github.token }}
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}
       - name: Install Python
-        shell: bash 
+        shell: bash
         run: |
           ./get-python.sh ${{ matrix.target }}
-      
+
       - name: Build Daemon
-        uses: actions-rs/cargo@v1
-        env: 
+        env:
           PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
-        with:
-          command: build
-          args: --release --target ${{ matrix.target }} -p apid
+        run: cargo build --release --target ${{ matrix.target }} -p apid
 
       - name: Build CLI
-        uses: actions-rs/cargo@v1
-        env: 
+        env:
           PYO3_CONFIG_FILE: "${{ github.workspace }}/runners/python_runner/pyembedded/pyo3-build-config-file.txt"
-        with:
-          command: build
-          args: --release --target ${{ matrix.target }} -p apicli
+        run: cargo build --release --target ${{ matrix.target }} -p apicli
       
       - name: Package
         shell: bash 
