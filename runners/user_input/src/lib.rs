@@ -59,6 +59,16 @@ impl UserInput {
         params: serde_json::Value,
         ctx: &execution_engine::services::EngineInputContext,
     ) -> error::Result<serde_json::Value> {
+        self.run_internal_with_timeout(params, ctx, Duration::from_secs(60))
+    }
+
+    ///
+    fn run_internal_with_timeout(
+        &self,
+        params: serde_json::Value,
+        ctx: &execution_engine::services::EngineInputContext,
+        timeout: Duration,
+    ) -> error::Result<serde_json::Value> {
         let rx = {
             let (tx, rx) = mpsc::channel::<serde_json::Value>();
             let mut signals = self
@@ -69,7 +79,7 @@ impl UserInput {
             rx
         };
 
-        let value = rx.recv_timeout(Duration::from_secs(60))?;
+        let result = rx.recv_timeout(timeout);
 
         {
             let mut signals = self
@@ -77,9 +87,9 @@ impl UserInput {
                 .lock()
                 .map_err(|e| error::UserInput::PoisonedLock(e.to_string()))?;
             signals.remove(&ctx.execution_id);
-        };
+        }
 
-        Ok(value)
+        Ok(result?)
     }
 }
 
@@ -92,5 +102,31 @@ impl InputPrompter for UserInput {
     ) -> execution_engine::error::Result<serde_json::Value> {
         let result = self.run_internal(params, ctx)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use execution_engine::services::EngineInputContext;
+
+    use super::*;
+
+    #[test]
+    fn cleans_up_the_signal_entry_even_when_recv_times_out() {
+        let signals: Signals = Arc::new(Mutex::new(HashMap::new()));
+        let user_input = UserInput::new(Arc::clone(&signals));
+        let ctx = EngineInputContext::new(None, "test-execution-id".to_owned(), false);
+
+        let result = user_input.run_internal_with_timeout(
+            serde_json::json!({}),
+            &ctx,
+            Duration::from_millis(10),
+        );
+
+        assert!(result.is_err(), "expected a timeout error, got {result:?}");
+        assert!(
+            signals.lock().unwrap().is_empty(),
+            "expected the signal entry to be cleaned up after a timeout, not left behind"
+        );
     }
 }
