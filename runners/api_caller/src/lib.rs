@@ -637,6 +637,9 @@ impl APICallState {
 pub struct APICaller {
     ///
     log: Arc<RwLock<File>>,
+
+    ///
+    client: reqwest::blocking::Client,
 }
 
 impl APICaller {
@@ -644,7 +647,10 @@ impl APICaller {
     #[must_use]
     #[inline]
     pub fn new(log: Arc<RwLock<File>>) -> Self {
-        Self { log }
+        Self {
+            log,
+            client: reqwest::blocking::Client::new(),
+        }
     }
 
     ///
@@ -701,10 +707,9 @@ impl APICaller {
             )?;
 
             // Send the request
-            let client = reqwest::blocking::Client::new();
             let result = call_state.send(
                 format!("{name}.{operation_name}").as_str(),
-                &client,
+                &self.client,
                 &self.log,
             )?;
 
@@ -787,5 +792,84 @@ impl DataConnectionRunner for APICaller {
     ) -> execution_engine::error::Result<serde_json::Value> {
         let result = self.run_internal(name, operation_name, bundle, &params, &options, ctx)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+    };
+
+    use super::*;
+
+    // Minimal HTTP/1.1 keep-alive test server: accepts connections, serves
+    // as many requests as arrive on each one, and counts distinct accepted
+    // connections so the test can prove connection reuse.
+    fn start_test_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut writer = stream;
+                    loop {
+                        let mut request_line = String::new();
+                        if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        loop {
+                            let mut header_line = String::new();
+                            let n = reader.read_line(&mut header_line).unwrap_or(0);
+                            if n == 0 || header_line == "\r\n" {
+                                break;
+                            }
+                        }
+                        let body = b"{}";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                            body.len()
+                        );
+                        if writer.write_all(response.as_bytes()).is_err()
+                            || writer.write_all(body).is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        (format!("http://{addr}"), accepted)
+    }
+
+    #[test]
+    fn reuses_the_same_http_client_across_calls() {
+        let (base_url, accepted) = start_test_server();
+        let log = Arc::new(RwLock::new(tempfile::tempfile().unwrap()));
+        let caller = APICaller::new(log);
+
+        caller
+            .client
+            .get(format!("{base_url}/ping"))
+            .send()
+            .unwrap();
+        caller
+            .client
+            .get(format!("{base_url}/ping"))
+            .send()
+            .unwrap();
+
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            1,
+            "expected the second request to reuse the pooled connection from the first"
+        );
     }
 }

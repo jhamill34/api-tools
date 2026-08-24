@@ -111,6 +111,7 @@ dependencies = [
  "jsonptr",
  "reqwest",
  "serde_json",
+ "tempfile",
  "thiserror",
  "url",
  "urlencoding",
