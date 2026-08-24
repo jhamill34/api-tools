@@ -42,6 +42,13 @@ RUN PBS_TRIPLE="$(cat /tmp/pbs_triple)" && \
 ENV PYO3_PYTHON=/opt/python/bin/python3
 ENV LD_LIBRARY_PATH=/opt/python/lib
 
+# python-build-standalone's baked-in sysconfig LIBDIR still points at its
+# original (non-relocatable) build prefix, which pyo3-build-config trusts
+# over `python3-config --ldflags` (which self-relocates correctly) - so the
+# linker's -L search path has to be given explicitly here or `cargo build`
+# fails at the final link step with "unable to find library -lpython3.12".
+ENV RUSTFLAGS="-L /opt/python/lib"
+
 WORKDIR /build
 COPY . .
 
