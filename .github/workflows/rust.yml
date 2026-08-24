@@ -45,6 +45,25 @@ jobs:
       - name: Testing
         run: cargo test
   
+  build-apid-image:
+    name: build-apid-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build apid image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./binary/apid/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy-apicli:
     name: deploy-apicli
     runs-on: ${{ matrix.os }}
@@ -130,4 +149,6 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/apid:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/apid:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
