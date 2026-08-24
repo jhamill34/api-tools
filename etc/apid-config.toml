@@ -2,8 +2,8 @@
 # path = "<CUSTOM PATH TO CONNECTORS>"
 
 [log]
-api_path = "/usr/local/var/log/apid/api.log"
-workflow_path = "/usr/local/var/log/apid/workflow.log"
+api_path = "/var/log/apid/api.log"
+workflow_path = "/var/log/apid/workflow.log"
 
 [server]
 port = 50051
