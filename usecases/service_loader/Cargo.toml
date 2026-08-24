@@ -6,18 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version="1.0", features=["derive"] }
-serde_yaml = "0.9"
-serde_json = { version="1.0", features=["preserve_order"] }
-jsonptr = "0.4.2"
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+jsonptr = { workspace = true }
 uriparse = "0.6"
 
-protobuf = "3.2"
-protobuf-json-mapping = "3.2"
+protobuf = { workspace = true }
+protobuf-json-mapping = { workspace = true }
 
 credential_entities = { path = "../../entities/credentials" }
 core_entities = { path = "../../entities/core" }
 
-thiserror = "1.0"
-anyhow = "1.0"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
