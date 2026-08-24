@@ -331,15 +331,13 @@ fn handle_parameter(
 ) -> error::Result<()> {
     // TODO: extract into a referece based on a flag
 
+    let in_type = source
+        .in_
+        .enum_value()
+        .map_err(|_| error::ServiceWriter::Unimplemented("Unrecognized parameter location".into()))?;
     sink.insert(
         "in".into(),
-        source
-            .in_
-            .unwrap()
-            .descriptor()
-            .name()
-            .to_lowercase()
-            .into(),
+        in_type.descriptor().name().to_lowercase().into(),
     );
     sink.insert("name".into(), source.name.clone().into());
     sink.insert("required".into(), source.required.into());
@@ -460,4 +458,28 @@ fn handle_schema(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use protobuf::EnumOrUnknown;
+
+    use super::*;
+
+    #[test]
+    fn handle_parameter_does_not_panic_on_an_unrecognized_location() {
+        let source = service::Parameter {
+            name: "x".to_owned(),
+            in_: EnumOrUnknown::from_i32(999),
+            ..Default::default()
+        };
+
+        let mut sink = serde_json::Map::new();
+        let result = handle_parameter(&mut sink, &source);
+
+        assert!(
+            matches!(result, Err(error::ServiceWriter::Unimplemented(_))),
+            "expected an unrecognized parameter location to error instead of writing a bogus \"in\" value, got {result:?}"
+        );
+    }
 }

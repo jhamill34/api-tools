@@ -286,7 +286,7 @@ impl APICallState {
 
     ///
     fn set_method(&mut self, operation: &Operation) -> error::Result<()> {
-        match operation.method.unwrap() {
+        match operation.method.enum_value_or_default() {
             core_entities::service::operation::HttpMethodType::POST => {
                 self.method = String::from("POST");
             }
@@ -346,7 +346,7 @@ impl APICallState {
             }
 
             if let Some(value) = value {
-                match defined_param.in_.unwrap() {
+                match defined_param.in_.enum_value_or_default() {
                     core_entities::service::parameter::InType::QUERY => {
                         self.query_params
                             .insert(defined_param.name.clone(), value.clone());
@@ -383,7 +383,11 @@ impl APICallState {
         creds: Option<&Authentication>,
     ) -> error::Result<()> {
         let defined_auth = &manifest.auth;
-        match defined_auth.type_.unwrap() {
+        let auth_type = defined_auth
+            .type_
+            .enum_value()
+            .map_err(|_| error::APICaller::Unimplemented("Unrecognized auth type".into()))?;
+        match auth_type {
             core_entities::service::swagger_service::service_auth::Type::HEADER => {
                 let key = defined_auth
                     .params
@@ -804,6 +808,9 @@ mod tests {
         thread,
     };
 
+    use core_entities::service::{swagger_service::ServiceAuth, Operation, SwaggerService};
+    use protobuf::{EnumOrUnknown, MessageField};
+
     use super::*;
 
     // Minimal HTTP/1.1 keep-alive test server: accepts connections, serves
@@ -870,6 +877,59 @@ mod tests {
             accepted.load(Ordering::SeqCst),
             1,
             "expected the second request to reuse the pooled connection from the first"
+        );
+    }
+
+    #[test]
+    fn set_method_does_not_panic_on_an_unrecognized_method() {
+        let operation = Operation {
+            method: EnumOrUnknown::from_i32(999),
+            ..Default::default()
+        };
+
+        let mut call_state = APICallState::default();
+        let result = call_state.set_method(&operation);
+
+        assert!(
+            matches!(result, Err(error::APICaller::InvalidMethod(_))),
+            "expected InvalidMethod, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn collect_params_does_not_panic_on_an_unrecognized_parameter_location() {
+        let defined_param = Parameter {
+            name: "x".to_owned(),
+            in_: EnumOrUnknown::from_i32(999),
+            ..Default::default()
+        };
+        let params = serde_json::json!({ "x": "value" });
+
+        let mut call_state = APICallState::default();
+        let result = call_state.collect_params(&params, &[defined_param], true);
+
+        assert!(
+            matches!(result, Err(error::APICaller::Unimplemented(_))),
+            "expected Unimplemented, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn handle_auth_does_not_panic_on_an_unrecognized_auth_type() {
+        let manifest = SwaggerService {
+            auth: MessageField::some(ServiceAuth {
+                type_: EnumOrUnknown::from_i32(999),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mut call_state = APICallState::default();
+        let result = call_state.handle_auth(&manifest, None);
+
+        assert!(
+            result.is_err(),
+            "expected an unrecognized auth type to error instead of silently skipping auth, got {result:?}"
         );
     }
 }

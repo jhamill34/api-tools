@@ -109,6 +109,7 @@ dependencies = [
  "execution_engine",
  "http",
  "jsonptr",
+ "protobuf",
  "reqwest",
  "serde_json",
  "tempfile",
