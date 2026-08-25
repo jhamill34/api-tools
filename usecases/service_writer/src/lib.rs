@@ -15,7 +15,9 @@
     clippy::single_call_fn
 )]
 
-//!
+//! Serializes an internal [`VersionedServiceTree`]/[`Authentication`] pair
+//! back out to OpenAPI-shaped JSON/YAML and credential JSON, the inverse of
+//! `service_loader`'s `OpenAPI` loader.
 
 use std::{collections::HashMap, io};
 
@@ -25,28 +27,35 @@ use protobuf::EnumFull as _;
 
 pub mod error;
 
-///
+/// An output port [`ServiceWriter`] writes to: opens a writable destination
+/// for a given `location`.
 pub trait Storage<W>
 where
     W: io::Write,
 {
+    /// Opens `location` for writing.
     ///
     /// # Errors
     fn store(&self, location: &str) -> io::Result<W>;
 }
 
-///
+/// Writes a service manifest or its credentials out through a [`Storage`]
+/// adapter.
 #[non_exhaustive]
 pub struct ServiceWriter;
 
 impl ServiceWriter {
-    ///
+    /// Creates a [`ServiceWriter`].
     #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self
     }
 
+    /// Writes `service`'s manifest as pretty-printed JSON to
+    /// `./manifest.json.new`, and — if the manifest has an `OpenAPI`
+    /// (`swagger`) source — writes the reconstructed `OpenAPI` document
+    /// alongside it via `handle_openapi`.
     ///
     /// # Errors
     #[inline]
@@ -78,6 +87,7 @@ impl ServiceWriter {
         Ok(())
     }
 
+    /// Writes `credentials` as pretty-printed JSON to `./credentials.json`.
     ///
     /// # Errors
     #[inline]
@@ -106,7 +116,8 @@ impl Default for ServiceWriter {
     }
 }
 
-///
+/// Reconstructs an `OpenAPI` document (servers, info, paths, component
+/// schemas) from `message` and writes it as YAML to `{source}.new`.
 fn handle_openapi<W: io::Write>(
     storage: &dyn Storage<W>,
     source: &str,
@@ -164,7 +175,8 @@ fn handle_openapi<W: io::Write>(
     Ok(())
 }
 
-///
+/// Groups `operations` by their `path`, then by HTTP verb, writing each
+/// one's `operationId` and body via [`handle_operation`].
 fn handle_path_items(
     paths: &mut serde_json::Map<String, serde_json::Value>,
     operations: &HashMap<String, service::Operation>,
@@ -221,7 +233,8 @@ fn handle_path_items(
     Ok(())
 }
 
-///
+/// Writes an operation's summary, description, parameters, request body,
+/// and responses into `sink`.
 fn handle_operation(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::Operation,
@@ -266,7 +279,7 @@ fn handle_operation(
     Ok(())
 }
 
-///
+/// Writes a response's content (per MIME type) into `sink`.
 fn handle_response(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::ApiResponse,
@@ -286,7 +299,8 @@ fn handle_response(
     Ok(())
 }
 
-///
+/// Writes a request body's description and content (per MIME type) into
+/// `sink`.
 fn handle_request_body(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::RequestBody,
@@ -310,7 +324,7 @@ fn handle_request_body(
     Ok(())
 }
 
-///
+/// Writes a media type's schema (if any) into `sink`.
 fn handle_media(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::MediaType,
@@ -324,7 +338,10 @@ fn handle_media(
     Ok(())
 }
 
-///
+/// Writes a parameter's location, name, requiredness, description, and
+/// schema into `sink`. Errors if the parameter's location isn't a
+/// recognized [`InType`](service::parameter::InType) variant, rather than
+/// writing a bogus `in` value.
 fn handle_parameter(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::Parameter,
@@ -354,7 +371,9 @@ fn handle_parameter(
     Ok(())
 }
 
-///
+/// Writes a schema into `sink`: a `$ref` string, a typed schema object
+/// (recursing into object properties/array items), or an `allOf`/`anyOf`/
+/// `oneOf` composition (recursing into each branch).
 fn handle_schema(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::Schema,
