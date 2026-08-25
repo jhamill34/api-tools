@@ -399,19 +399,22 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 /// the user-input handler, and the filtered-runner wrapper are each
 /// gated behind their own feature flag — `lua` isn't in this build's
 /// `default` set yet).
+///
+/// Does blocking work (`reqwest::blocking::Client::new()` internally
+/// spins up its own tokio runtime, which cannot be constructed or torn
+/// down from an already-running async context) — callers on the async
+/// main thread must invoke this through `tokio::task::spawn_blocking`.
 fn construct_execution_engine(
     lookup: Arc<Mutex<dyn EngineLookup + Sync + Send>>,
     signals: Signals,
-    config: &Configuration,
+    workflow_path: &str,
+    api_path: &str,
 ) -> anyhow::Result<Arc<RwLock<execution_engine::Engine>>> {
     let (workflow_logger, _workflow_logger_handle) =
-        common_data_structures::log_writer::LogWriter::spawn(File::create(
-            config.log.workflow_path.clone(),
-        )?);
+        common_data_structures::log_writer::LogWriter::spawn(File::create(workflow_path)?);
 
-    let (api_logger, _api_logger_handle) = common_data_structures::log_writer::LogWriter::spawn(
-        File::create(config.log.api_path.clone())?,
-    );
+    let (api_logger, _api_logger_handle) =
+        common_data_structures::log_writer::LogWriter::spawn(File::create(api_path)?);
 
     let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
         lookup,
@@ -531,11 +534,17 @@ async fn main() -> anyhow::Result<()> {
     let signals = HashMap::<String, (serde_json::Value, Sender<serde_json::Value>)>::new();
     let signals = Arc::new(Mutex::new(signals));
 
-    let engine = construct_execution_engine(
-        Arc::<Mutex<in_memory_storage::OperationRepos>>::clone(&repos),
-        Arc::clone(&signals),
-        &config,
-    )?;
+    let engine = {
+        let repos = Arc::<Mutex<in_memory_storage::OperationRepos>>::clone(&repos);
+        let signals = Arc::clone(&signals);
+        let workflow_path = config.log.workflow_path.clone();
+        let api_path = config.log.api_path.clone();
+
+        tokio::task::spawn_blocking(move || {
+            construct_execution_engine(repos, signals, &workflow_path, &api_path)
+        })
+        .await??
+    };
 
     let engine = ApiDaemon::new(repos, paths, engine, response_store, signals);
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
@@ -578,6 +587,48 @@ mod tests {
             .insert("exec-1".to_owned(), (serde_json::Value::Null, tx));
 
         (responses, signals, "exec-1".to_owned())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn construct_execution_engine_does_not_panic_when_called_via_spawn_blocking() {
+        let repos = OperationRepos::new(
+            Box::new(InMemoryRepository::new()),
+            Box::new(InMemoryRepository::new()),
+        );
+        let repos: Arc<Mutex<dyn EngineLookup + Sync + Send>> = Arc::new(Mutex::new(repos));
+        let signals: Signals = Arc::new(Mutex::new(HashMap::new()));
+
+        let log_dir = tempfile::tempdir().unwrap();
+        let workflow_path = log_dir
+            .path()
+            .join("workflow.log")
+            .to_string_lossy()
+            .into_owned();
+        let api_path = log_dir
+            .path()
+            .join("api.log")
+            .to_string_lossy()
+            .into_owned();
+
+        // Mirrors exactly how main() calls this: from the async runtime,
+        // but through spawn_blocking rather than directly — calling it
+        // directly here would reproduce the panic this test guards
+        // against (reqwest::blocking::Client::new() cannot construct its
+        // own tokio runtime from within an already-running one).
+        let result = tokio::task::spawn_blocking(move || {
+            construct_execution_engine(repos, signals, &workflow_path, &api_path)
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "expected the spawn_blocking task itself not to panic, got {:?}",
+            result.as_ref().err()
+        );
+        assert!(
+            result.unwrap().is_ok(),
+            "expected construct_execution_engine to succeed"
+        );
     }
 
     #[test]
