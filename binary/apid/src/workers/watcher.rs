@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout)]
 
-//!
+//! The background thread that polls loaded services' directories for
+//! filesystem changes and reports them to [`super::loader`].
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -18,7 +19,9 @@ use std::{
 
 use notify::Watcher;
 
-///
+/// Spawns a thread that polls every path in `paths` for filesystem
+/// changes, waiting on `rx` between batches so it only polls while the
+/// loader thread (signalled via `tx`) is ready for the next one.
 pub fn start(
     paths: Arc<HashMap<String, PathBuf>>,
     tx: Sender<Vec<String>>,

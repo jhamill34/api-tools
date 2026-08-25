@@ -1,4 +1,5 @@
-//!
+//! Background threads that watch loaded services' directories for changes
+//! and hot-reload them into the shared repositories.
 
 mod loader;
 mod watcher;
@@ -15,7 +16,9 @@ use std::{
 
 use in_memory_storage::OperationRepos;
 
-///
+/// Starts the file-watcher and loader background threads (see
+/// [`watcher`] and [`loader`]) and kicks off an initial load of every
+/// service in `paths`.
 pub fn start_background_watcher(
     repos: Arc<Mutex<OperationRepos>>,
     paths: &Arc<HashMap<String, PathBuf>>,

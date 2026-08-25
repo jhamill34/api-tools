@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout, clippy::use_debug)]
 
-//!
+//! The background thread that (re)loads changed services into the shared
+//! repositories, signalled by [`super::watcher`].
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -19,7 +20,10 @@ use in_memory_storage::OperationRepos;
 use local_file_loader::LocalFileFetcher;
 use service_loader::ServiceLoader;
 
-///
+/// Spawns a thread that waits on `rx` for batches of changed service names,
+/// reloads each one from `paths` into `repos`, then signals readiness on
+/// `tx` (both at startup and after each reload batch) so the watcher thread
+/// knows it's safe to report the next batch of changes.
 pub fn start(
     repos: Arc<Mutex<OperationRepos>>,
     paths: Arc<HashMap<String, PathBuf>>,

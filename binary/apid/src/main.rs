@@ -17,7 +17,9 @@
     clippy::min_ident_chars,
 )]
 
-//!
+//! The daemon binary: a `tonic` gRPC server that wires concrete adapters
+//! into an [`execution_engine::Engine`] and exposes it as the [`Engine`]
+//! service, the composition root of the whole workspace.
 
 mod config;
 mod constants;
@@ -61,26 +63,29 @@ use user_input::Signals;
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-///
+/// Implements the gRPC [`Engine`] service over the shared repositories,
+/// execution engine, and in-flight run/signal state.
 struct ApiDaemon {
-    ///
+    /// The loaded services and credentials, shared with the background
+    /// watcher/loader threads.
     repos: Arc<Mutex<OperationRepos>>,
 
-    ///
+    /// Each loaded service's directory on disk, keyed by service name.
     paths: Arc<HashMap<String, PathBuf>>,
 
-    ///
+    /// The execution engine runs are dispatched to.
     engine: Arc<RwLock<execution_engine::Engine>>,
 
-    ///
+    /// Results of in-flight and completed runs, keyed by execution ID.
     responses: Arc<Mutex<HashMap<String, GetRunResultResponse>>>,
 
-    ///
+    /// Pending `InputPrompter` prompts awaiting an answer, shared with the
+    /// registered [`user_input::UserInput`] runner.
     signals: Signals,
 }
 
 impl ApiDaemon {
-    ///
+    /// Bundles the given shared state into an [`ApiDaemon`].
     #[must_use]
     #[inline]
     fn new(
@@ -374,7 +379,11 @@ impl Engine for ApiDaemon {
     }
 }
 
-///
+/// Builds an [`execution_engine::Engine`] backed by `lookup`, and registers
+/// every adapter enabled by this build's Cargo features (the API-call
+/// connector is always registered; Python/JavaScript code runners, the
+/// user-input handler, and the filtered-runner wrapper are each gated
+/// behind their own feature flag).
 fn construct_execution_engine(
     lookup: Arc<Mutex<dyn EngineLookup + Sync + Send>>,
     signals: Signals,
