@@ -1,4 +1,6 @@
-//!
+//! Shared helpers for the `OpenAPI` loader: extracting typed fields from raw
+//! JSON, and resolving `$ref` references (internal and external, with
+//! cycle detection and per-document caching).
 
 use core::str::FromStr;
 use std::{
@@ -12,7 +14,7 @@ use crate::Fetcher;
 
 use super::error;
 
-///
+/// The JSON key an `OpenAPI` reference object stores its target under.
 const REF_KEY: &str = "$ref";
 
 /// TODO: Why are we cloning?
@@ -55,7 +57,11 @@ pub fn optional_field<T: DeserializeOwned>(
     Ok(result)
 }
 
-///
+/// If `item` is a `$ref` object, resolves it (recursively, in case the
+/// target is itself a reference) against `root` — fetching and caching the
+/// target document first if the reference is external — and returns the
+/// resolved key and value. Returns `None` if `item` isn't a reference.
+/// Errors on a reference cycle, tracked via `seen`.
 pub fn handle_reference<R: io::Read>(
     item: &serde_json::Value,
     root: &serde_json::Value,
@@ -97,7 +103,8 @@ pub fn handle_reference<R: io::Read>(
     }
 }
 
-///
+/// Fetches and parses `source` as YAML the first time it's requested,
+/// caching the result in `cache` for subsequent lookups.
 fn fetch_and_cache<'cache, R: io::Read>(
     source: &str,
     fetcher: &dyn Fetcher<R>,
@@ -115,23 +122,25 @@ fn fetch_and_cache<'cache, R: io::Read>(
     Ok(result)
 }
 
-///
+/// A parsed `$ref` string: `"{source}#{path}"`, where an empty `source`
+/// means the reference targets the current document.
 #[derive(Debug)]
 struct Reference {
-    ///
+    /// The JSON pointer into the target document.
     pub path: jsonptr::Pointer,
 
-    ///
+    /// Whether the reference targets the current document or another one.
     pub type_: ReferenceType,
 }
 
-///
+/// Whether a [`Reference`] targets the document it appears in, or another
+/// document fetched by URL/path.
 #[derive(Debug)]
 enum ReferenceType {
-    ///
+    /// Targets the current document.
     Internal,
 
-    ///
+    /// Targets another document, fetched from this source.
     External(String),
 }
 
