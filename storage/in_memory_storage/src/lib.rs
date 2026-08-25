@@ -17,7 +17,10 @@
     clippy::single_call_fn
 )]
 
-//!
+//! An in-memory storage adapter that backs both [`service_loader`]'s
+//! [`LoaderOutput`] (persisting loaded services/credentials) and
+//! [`execution_engine`]'s [`EngineLookup`] (resolving them again at
+//! execution time).
 
 pub mod error;
 pub mod repo;
@@ -28,18 +31,20 @@ use execution_engine::services::EngineLookup;
 use repo::Repository;
 use service_loader::LoaderOutput;
 
-///
+/// Bundles the two [`Repository`] instances a loaded workspace needs: one
+/// for service manifests, one for credentials. Implements both
+/// [`LoaderOutput`] and [`EngineLookup`] over the same underlying storage.
 #[non_exhaustive]
 pub struct OperationRepos {
-    ///
+    /// Backing store for loaded service manifests, keyed by service ID.
     pub services: Box<dyn Repository<VersionedServiceTree> + Send + Sync>,
 
-    ///
+    /// Backing store for loaded credentials, keyed by credential ID.
     pub credentials: Box<dyn Repository<Authentication> + Send + Sync>,
 }
 
 impl OperationRepos {
-    ///
+    /// Bundles the given `services` and `credentials` repositories.
     #[inline]
     #[must_use]
     pub fn new(
