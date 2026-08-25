@@ -96,6 +96,9 @@ jobs:
 
           echo "apid started and bound its gRPC port successfully"
 
+      - name: Lua runner e2e smoke test
+        run: cargo test -p apid --features lua --test lua_e2e
+
   build-apid-image:
     name: build-apid-image
     runs-on: ubuntu-latest
