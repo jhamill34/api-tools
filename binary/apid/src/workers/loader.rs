@@ -1,5 +1,3 @@
-#![allow(clippy::print_stdout, clippy::use_debug)]
-
 //! The background thread that (re)loads changed services into the shared
 //! repositories, signalled by [`super::watcher`].
 
@@ -19,6 +17,7 @@ use std::{
 use in_memory_storage::OperationRepos;
 use local_file_loader::LocalFileFetcher;
 use service_loader::ServiceLoader;
+use tracing::{error, info, warn};
 
 /// Spawns a thread that waits on `rx` for batches of changed service names,
 /// reloads each one from `paths` into `repos`, then signals readiness on
@@ -34,7 +33,7 @@ pub fn start(
         let loader = ServiceLoader::default();
 
         if let Err(err) = tx.send(true) {
-            println!("Unable to signal to watcher thread ready: {err}");
+            error!(%err, "unable to signal to watcher thread ready");
             return;
         }
 
@@ -48,17 +47,17 @@ pub fn start(
                         .load(&service, &fetcher, repos, true, false)
                         .map_err(anyhow::Error::from)
                     {
-                        println!("Error loading {service}:\n{err:?}");
+                        error!(?err, %service, "error loading service");
                     } else {
-                        println!("Reloading {service}");
+                        info!(%service, "reloading service");
                     }
                 } else {
-                    println!("Service not found?: {service}");
+                    warn!(%service, "service not found");
                 }
             }
 
             if let Err(err) = tx.send(true) {
-                println!("Unable to signal to watcher thread ready: {err}");
+                error!(%err, "unable to signal to watcher thread ready");
                 return;
             }
         }

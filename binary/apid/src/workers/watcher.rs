@@ -1,5 +1,3 @@
-#![allow(clippy::print_stdout)]
-
 //! The background thread that polls loaded services' directories for
 //! filesystem changes and reports them to [`super::loader`].
 
@@ -18,6 +16,7 @@ use std::{
 };
 
 use notify::Watcher;
+use tracing::{error, info};
 
 /// Spawns a thread that polls every path in `paths` for filesystem
 /// changes, waiting on `rx` between batches so it only polls while the
@@ -47,7 +46,7 @@ pub fn start(
 
                     match inner_tx.send(true) {
                         Ok(()) => {}
-                        Err(err) => println!("Unable to signal read for loading: {err}"),
+                        Err(err) => error!(%err, "unable to signal read for loading"),
                     }
                 },
                 config,
@@ -56,15 +55,15 @@ pub fn start(
             match watcher {
                 Ok(mut watcher) => match watcher.watch(path, notify::RecursiveMode::Recursive) {
                     Ok(()) => {
-                        println!("Started watcher for: {}", path.to_string_lossy());
+                        info!(path = %path.display(), "started watcher");
                         watchers.push(watcher);
                     }
                     Err(err) => {
-                        println!("Unable start PollWatcher: {err}");
+                        error!(%err, "unable to start PollWatcher");
                     }
                 },
                 Err(err) => {
-                    println!("Unable create PollWatcher: {err}");
+                    error!(%err, "unable to create PollWatcher");
                 }
             }
         }
@@ -79,7 +78,7 @@ pub fn start(
 
                         let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
                         if let Err(err) = tx.send(cache.drain().collect()) {
-                            println!("Unable to signal to loader thread what to load: {err}");
+                            error!(%err, "unable to signal to loader thread what to load");
                             return;
                         }
                     }
