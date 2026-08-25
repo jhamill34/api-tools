@@ -20,7 +20,9 @@
     clippy::ref_patterns,
 )]
 
-//!
+//! A [`FilteredRunner`] adapter that calls another already-registered
+//! operation through the [`execution_engine`] and narrows its result down to
+//! a specific set of selected output fields.
 
 pub mod error;
 
@@ -38,24 +40,31 @@ lazy_static! {
         Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
 }
 
-///
+/// Resolves an [`APIWrappedService`](core_entities::service::APIWrappedService)
+/// manifest by invoking the wrapped operation on the shared
+/// [`execution_engine::Engine`] and picking out the manifest's selected
+/// output fields.
 pub struct APIWrapper {
-    ///
+    /// Currently unused; kept for parity with the other runners' constructors.
     _log: Arc<RwLock<File>>,
 
-    ///
+    /// The engine used to invoke the wrapped operation.
     engine: Arc<RwLock<execution_engine::Engine>>,
 }
 
 impl APIWrapper {
-    ///
+    /// Creates an [`APIWrapper`] that dispatches wrapped calls through
+    /// `engine`.
     #[must_use]
     #[inline]
     pub fn new(log: Arc<RwLock<File>>, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
         Self { _log: log, engine }
     }
 
-    ///
+    /// Builds the wrapped operation's input from `manifest.inputs` and
+    /// `params`, runs it through [`engine`](APIWrapper::new), then extracts
+    /// `manifest.outputSelectors` (`JMESPath` expressions) from the result
+    /// into the returned object.
     #[inline]
     fn run_internal(
         &self,
@@ -125,7 +134,8 @@ impl FilteredRunner for APIWrapper {
     }
 }
 
-///
+/// Parses the `app` component out of a connector ID formatted as
+/// `"group/app:version"`.
 fn extract_connector_id(id: &str) -> error::Result<&str> {
     let op_regex = OPERATION_REGEX
         .as_ref()
@@ -142,7 +152,9 @@ fn extract_connector_id(id: &str) -> error::Result<&str> {
     Ok(app)
 }
 
-///
+/// Writes `value` into `current` at the dot-separated path `parts`,
+/// creating intermediate JSON objects along the way. Errors if an
+/// intermediate path segment lands on a non-object value.
 fn traverse_map(
     current: &mut serde_json::Value,
     parts: &[&str],
