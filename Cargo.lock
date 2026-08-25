@@ -170,6 +170,7 @@ dependencies = [
  "serde_json",
  "service_loader",
  "service_writer",
+ "tempfile",
  "tokio",
  "toml 0.7.8",
  "tonic",
