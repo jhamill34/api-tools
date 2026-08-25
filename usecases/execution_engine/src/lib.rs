@@ -310,6 +310,25 @@ impl Engine {
                             ))
                         }
                     }
+                    Ok(Language::LUA) => {
+                        if let Some(code_runner) = self.code_runners.get("lua") {
+                            self.log(identifier, "SIMPLE_CODE", "STARTED")?;
+                            let result = code_runner.run(
+                                service_name,
+                                operation_name,
+                                simple_code.code.codeString(),
+                                params,
+                                context,
+                            )?;
+                            self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
+
+                            Ok(result)
+                        } else {
+                            Err(error::ExecutionEngine::NotFound(
+                                "Code runner not found for lua".into(),
+                            ))
+                        }
+                    }
                     _ => Err(error::ExecutionEngine::NotFound("Unknown language".into())),
                 }
             }

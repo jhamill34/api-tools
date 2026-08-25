@@ -34,6 +34,7 @@ local_file_loader = { path = "../../storage/local_file_loader" }
 api_caller = { path = "../../runners/api_caller" }
 python_runner = { path = "../../runners/python_runner" }
 javascript_runner = { path = "../../runners/javascript_runner" }
+lua_runner = { path = "../../runners/lua_runner" }
 user_input = { path = "../../runners/user_input" }
 filtered_runner = { path = "../../runners/filtered_runner" }
 
@@ -50,6 +51,7 @@ dhat-ad-hoc = []
 default = ["python", "input", "javascript", "wrapper"]
 python = []
 javascript = []
+lua = []
 input = []
 wrapper = []
 

@@ -513,6 +513,7 @@ message CodeResource {
     UNSET = 0;
     JAVASCRIPT = 1;
     PYTHON = 2;
+    LUA = 3;
   }
   oneof value {
     string codeString = 1;

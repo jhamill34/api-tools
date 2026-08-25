@@ -395,9 +395,10 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 
 /// Builds an [`execution_engine::Engine`] backed by `lookup`, and registers
 /// every adapter enabled by this build's Cargo features (the API-call
-/// connector is always registered; Python/JavaScript code runners, the
-/// user-input handler, and the filtered-runner wrapper are each gated
-/// behind their own feature flag).
+/// connector is always registered; Python/JavaScript/Lua code runners,
+/// the user-input handler, and the filtered-runner wrapper are each
+/// gated behind their own feature flag — `lua` isn't in this build's
+/// `default` set yet).
 fn construct_execution_engine(
     lookup: Arc<Mutex<dyn EngineLookup + Sync + Send>>,
     signals: Signals,
@@ -427,6 +428,9 @@ fn construct_execution_engine(
     let js_runner =
         javascript_runner::JsActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
+    #[cfg(feature = "lua")]
+    let lua_runner = lua_runner::LuaActionRunner::new();
+
     #[cfg(feature = "input")]
     let input_handler = Box::new(user_input::UserInput::new(signals));
 
@@ -445,6 +449,9 @@ fn construct_execution_engine(
 
         #[cfg(feature = "javascript")]
         engine.register_language(constants::JAVASCRIPT_LANG, Box::new(js_runner));
+
+        #[cfg(feature = "lua")]
+        engine.register_language(constants::LUA_LANG, Box::new(lua_runner));
 
         #[cfg(feature = "input")]
         engine.register_input(input_handler);
