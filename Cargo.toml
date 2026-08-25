@@ -33,6 +33,10 @@ members = [
 	"common/data_structures",
 
 	"auth/oauth_flow",
+
+	# Spikes / prototypes - not wired into any binary yet, see the linked
+	# issue in each crate's README for context and status.
+	"prototypes/workflow_engine",
 ]
 
 [workspace.dependencies]
