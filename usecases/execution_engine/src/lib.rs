@@ -15,12 +15,14 @@
     clippy::ref_patterns
 )]
 
-//! Crate Docs
+//! The core orchestrator: [`Engine`] resolves a `service.operation`
+//! identifier against a loaded manifest and dispatches it to the
+//! registered [`services`] output port for that manifest's type.
 
 pub mod error;
 pub mod services;
 
-///
+/// Shared constants for the engine.
 mod constants;
 
 extern crate alloc;
@@ -41,32 +43,37 @@ use std::{
 use chrono::offset::Local;
 use core_entities::service::{code_resource::Language, service_manifest_latest};
 
-///
+/// Resolves an operation identifier against a loaded manifest and
+/// dispatches it to whichever registered output port matches the
+/// manifest's type.
 pub struct Engine {
-    ///
+    /// The input port used to resolve a service/its credentials by ID at
+    /// execution time.
     lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>,
 
-    ///
+    /// Where every dispatched run is logged.
     logger: Arc<RwLock<File>>,
 
-    ///
+    /// Handles `OpenAPI` (`Swagger`) operations, if registered.
     connector: Option<Box<dyn DataConnectionRunner + Send + Sync>>,
 
-    ///
+    /// Handles `SimpleCode`/`Action` operations, keyed by language.
     code_runners: HashMap<String, Box<dyn CodeRunner + Send + Sync>>,
 
-    ///
+    /// Handles `ScriptedAction` operations, if registered (currently never
+    /// dispatched to — see [`ScriptRunner`]).
     script_runner: Option<Box<dyn ScriptRunner + Send + Sync>>,
 
-    ///
+    /// Handles `ApiWrapped` operations, if registered.
     filtered_runner: Option<Box<dyn FilteredRunner + Send + Sync>>,
 
-    ///
+    /// Handles the built-in `$input` operation, if registered.
     input_handler: Option<Box<dyn InputPrompter + Send + Sync>>,
 }
 
 impl Engine {
-    ///
+    /// Creates an [`Engine`] with no adapters registered yet; use the
+    /// `register_*` methods to add them.
     #[inline]
     pub fn new(
         lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>,
@@ -83,31 +90,32 @@ impl Engine {
         }
     }
 
-    ///
+    /// Registers a [`CodeRunner`] for `lang`,
+    /// overwriting any runner already registered for that language.
     #[inline]
     pub fn register_language(&mut self, lang: &str, runner: Box<dyn CodeRunner + Send + Sync>) {
         self.code_runners.insert(lang.to_owned(), runner);
     }
 
-    ///
+    /// Registers the [`ScriptRunner`].
     #[inline]
     pub fn register_script_runner(&mut self, runner: Box<dyn ScriptRunner + Send + Sync>) {
         self.script_runner = Some(runner);
     }
 
-    ///
+    /// Registers the [`FilteredRunner`].
     #[inline]
     pub fn register_filtered_runner(&mut self, runner: Box<dyn FilteredRunner + Send + Sync>) {
         self.filtered_runner = Some(runner);
     }
 
-    ///
+    /// Registers the [`DataConnectionRunner`].
     #[inline]
     pub fn register_connector(&mut self, runner: Box<dyn DataConnectionRunner + Send + Sync>) {
         self.connector = Some(runner);
     }
 
-    ///
+    /// Registers the [`InputPrompter`].
     #[inline]
     pub fn register_input(&mut self, handler: Box<dyn InputPrompter + Send + Sync>) {
         self.input_handler = Some(handler);
@@ -132,6 +140,14 @@ impl Engine {
         Ok((service_name, operation_name))
     }
 
+    /// Resolves `identifier` (or dispatches directly to the registered
+    /// [`InputPrompter`] for the built-in
+    /// `"$input"` identifier), looks up the target service and its
+    /// credentials, then dispatches to whichever output port matches the
+    /// manifest's type (`Swagger` → connector, `Action`/`SimpleCode` →
+    /// code runner, `ApiWrapped` → filtered runner). Wraps a non-array
+    /// result in a single-element array unless `context.raw_response` is
+    /// set.
     ///
     /// # Errors
     #[inline]
@@ -316,7 +332,8 @@ impl Engine {
         }
     }
 
-    ///
+    /// Writes a timestamped `(action_type) [status] id` line to the shared
+    /// log file.
     fn log(&self, id: &str, action_type: &str, status: &str) -> error::Result<()> {
         let now = Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
