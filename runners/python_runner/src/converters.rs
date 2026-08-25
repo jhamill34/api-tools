@@ -1,4 +1,4 @@
-//!
+//! Conversions between `serde_json::Value` and Python objects.
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -7,7 +7,9 @@ use serde_json::Value;
 
 // TODO: Use the serde feature....
 
-///
+/// Converts a JSON value into a Python object in the given interpreter,
+/// recursively converting array elements and object entries. An integer
+/// that doesn't fit `i64`/`f64` converts to `None`.
 pub fn from_value(py: Python, item: Value) -> PyResult<Py<PyAny>> {
     let result = match item {
         Value::Null => py.None(),
@@ -53,7 +55,10 @@ pub fn from_value(py: Python, item: Value) -> PyResult<Py<PyAny>> {
     Ok(result)
 }
 
-///
+/// Converts a Python object back into a JSON value, recursively converting
+/// list elements and dict entries (non-string keys are dropped). Any type
+/// not recognized as bool/float/int/string/list/dict converts to
+/// [`serde_json::Value::Null`].
 pub fn from_py(item: &PyAny) -> PyResult<serde_json::Value> {
     let result = if item.is_instance_of::<PyBool>()? {
         let item = item.downcast::<PyBool>()?;

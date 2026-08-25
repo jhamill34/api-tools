@@ -18,7 +18,9 @@
     clippy::min_ident_chars
 )]
 
-//!
+//! A [`CodeRunner`] adapter that executes a Python operation body in an
+//! embedded `CPython` interpreter, exposing `api`/`workflow`/`action`/`task`
+//! bindings the script can use to interact with the engine.
 
 mod bindings;
 mod constants;
@@ -43,7 +45,8 @@ lazy_static! {
         Regex::new(r"def\s*(?P<name>\w+)\s*\(\s*\w+\s*\)\s*:").ok();
 }
 
-///
+/// Runs `func` inline. A thin seam separating the actual Python-calling
+/// logic from its surrounding setup, kept as its own function for clarity.
 fn run_python<F>(func: F) -> PyResult<Value>
 where
     F: FnOnce() -> PyResult<Value>,
@@ -51,24 +54,34 @@ where
     func()
 }
 
-///
+/// A [`CodeRunner`] that wraps and executes a Python operation body in an
+/// embedded `CPython` interpreter, installing `api`/`workflow`/`action`/
+/// `task` bindings into the script's module namespace so it can call back
+/// into the shared [`execution_engine::Engine`].
 pub struct PyActionRunner {
-    ///
+    /// The engine used to resolve calls made from the script's bindings.
     engine: Arc<RwLock<execution_engine::Engine>>,
 
-    ///
+    /// Where the script's bindings log activity.
     loggers: Arc<RwLock<File>>,
 }
 
 impl PyActionRunner {
-    ///
+    /// Creates a [`PyActionRunner`] that dispatches binding calls through
+    /// `engine` and logs them to `loggers`.
     #[inline]
     #[must_use]
     pub fn new(loggers: Arc<RwLock<File>>, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
         Self { engine, loggers }
     }
 
-    ///
+    /// Detects `source_code`'s entry-point function name (falling back to
+    /// [`constants::DEFAULT_FUNCTION_NAME`] if none is found), evaluates
+    /// the script as a module with the `api`/`workflow`/`action`/`task`
+    /// bindings installed, calls the entry point with `params`, and
+    /// converts its return value — or, if the script called
+    /// `workflow.log.done`/`workflow.log.fail`, that call's output — back
+    /// to JSON.
     fn run_internal(
         &self,
         name: &str,
