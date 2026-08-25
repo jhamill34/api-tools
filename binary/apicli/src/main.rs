@@ -17,7 +17,9 @@
     clippy::min_ident_chars,
 )]
 
-//!
+//! The CLI binary: a thin gRPC client to `apid`, plus local scaffolding
+//! tools for generating new service definitions and an embedded
+//! interactive-login web server.
 
 mod commands;
 mod config;

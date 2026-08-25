@@ -1,4 +1,5 @@
-//!
+//! Generates a flat listing of an operation's input/output field paths,
+//! used by the `InputPaths`/`OutputPaths` CLI commands.
 
 use std::collections::{HashMap, HashSet};
 
@@ -6,7 +7,12 @@ use anyhow::{anyhow, bail};
 use common_data_structures::trie::Trie;
 use core_entities::service::VersionedServiceTree;
 
-///
+/// Lists `operation`'s input fields as one [`ParameterPathItem`] per field,
+/// driven by the service's manifest type: schema-derived paths for an
+/// `OpenAPI` (`Swagger`) operation's parameters and JSON request body, or a
+/// flat list of parameter names for an `Action` manifest. Errors on
+/// `ApiWrapped`/`SimpleCode`/`ScriptedAction` manifests, which aren't yet
+/// supported.
 pub fn get_input_paths(
     service: &VersionedServiceTree,
     operation: &str,
@@ -103,7 +109,12 @@ pub fn get_input_paths(
     Ok(input_paths)
 }
 
-///
+/// Lists `operation`'s output fields as one [`ParameterPathItem`] per
+/// field, mirroring [`get_input_paths`]'s per-manifest-type handling: the
+/// `OpenAPI` `200` response's JSON schema for a `Swagger` operation, or a
+/// flat list of output names for an `Action` manifest. Errors on
+/// `ApiWrapped`/`SimpleCode`/`ScriptedAction` manifests, which aren't yet
+/// supported.
 pub fn get_output_paths(
     service: &VersionedServiceTree,
     operation: &str,
@@ -185,23 +196,27 @@ pub fn get_output_paths(
     Ok(output_paths)
 }
 
-///
+/// One line of an input/output field listing: a field's path, type,
+/// composition context (e.g. which `oneOf`/`anyOf` branch it came from),
+/// and description.
 pub struct ParameterPathItem {
-    ///
+    /// The field's dotted/indexed path (e.g. `foo.bar[0]`), or a `$ref:`
+    /// marker if the path revisits an already-seen reference.
     pub path: String,
 
-    ///
+    /// The field's type name (`STRING`, `OBJECT`, ...), or `UNKNOWN` for
+    /// an unrecognized/unset type.
     pub type_: String,
 
-    ///
+    /// Which `oneOf`/`anyOf` branch this field belongs to, if any.
     pub context: Option<String>,
 
-    ///
+    /// The field's description, if any.
     pub description: String,
 }
 
 impl ParameterPathItem {
-    ///
+    /// Creates a [`ParameterPathItem`] from its parts.
     pub fn new(path: String, type_: String, context: Option<String>, description: String) -> Self {
         Self {
             path,
@@ -212,7 +227,9 @@ impl ParameterPathItem {
     }
 }
 
-///
+/// Appends a single [`ParameterPathItem`] for `name` with `param`'s type
+/// name (`"UNKNOWN"` for the unset/default variant, rather than
+/// panicking).
 pub fn populate_parameter_list(
     list: &mut Vec<ParameterPathItem>,
     param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
@@ -279,7 +296,12 @@ pub fn populate_parameter_list(
     }
 }
 
-///
+/// Appends [`ParameterPathItem`]s for `schema` into `list`: resolves a
+/// `$ref` against `types` (tracking `seen` references to emit a `$ref:`
+/// marker instead of recursing forever on a cycle), delegates to
+/// [`populate_schema_object_list`] for an inline schema object, or
+/// recurses into each branch of an `allOf`/`oneOf`/`anyOf` composition
+/// (tagging `oneOf`/`anyOf` branches in `prefix`).
 pub fn populate_schema_list(
     list: &mut Vec<ParameterPathItem>,
     schema: &Option<core_entities::service::schema::Value>,
@@ -339,7 +361,10 @@ pub fn populate_schema_list(
     }
 }
 
-///
+/// Appends a [`ParameterPathItem`] for `schema` itself, then — for an
+/// object or array — recurses into its (optionally `is_required`-filtered)
+/// properties or item schema, extending `path` as it goes. An
+/// unrecognized/unset type is listed as `"UNKNOWN"` rather than panicking.
 pub fn populate_schema_object_list(
     list: &mut Vec<ParameterPathItem>,
     schema: &core_entities::service::SchemaObject,

@@ -2,7 +2,9 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::needless_borrowed_reference)]
 
-//!
+//! Handlers for every CLI subcommand: the gRPC client calls to `apid`
+//! ([`Cli`]), the local JSON-schema inference/merge helpers, and the
+//! `generate` command's template rendering.
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -36,7 +38,7 @@ use crate::{
     template::{Direction, InputDescription},
 };
 
-///
+/// Reads a single line from stdin.
 fn read_line() -> io::Result<String> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -44,7 +46,8 @@ fn read_line() -> io::Result<String> {
     Ok(input)
 }
 
-///
+/// Reads lines from stdin until a blank line, joining them with `\n`. Used
+/// as the fallback input source for commands that also accept a file path.
 fn read_lines_from_stdin() -> io::Result<String> {
     let mut lines: Vec<String> = Vec::new();
 
@@ -57,17 +60,21 @@ fn read_lines_from_stdin() -> io::Result<String> {
     Ok(lines.join("\n"))
 }
 
-///
+/// Dispatches every CLI subcommand's logic: gRPC calls to `apid`, local
+/// stub/path/schema generation, and template rendering.
 pub struct Cli {
-    ///
+    /// The gRPC client connected to the configured `apid` daemon.
     client: EngineClient<Channel>,
 
-    ///
+    /// The loaded CLI configuration.
     config: Configuration,
 }
 
 impl Cli {
-    ///
+    /// Loads the CLI's configuration (from
+    /// [`constants::APICLI_CONFIG_PATH`], defaulting to
+    /// `~/.apicli/config.toml`) and connects to the configured `apid`
+    /// daemon.
     pub async fn init() -> anyhow::Result<Self> {
         let config = env::var(constants::APICLI_CONFIG_PATH).unwrap_or_else(|_| {
             let home = env::var("HOME").unwrap_or_else(|_| ".".to_owned());
@@ -85,7 +92,7 @@ impl Cli {
         Ok(Cli { client, config })
     }
 
-    ///
+    /// Lists every operation of every loaded service.
     pub async fn handle_list(&mut self) -> anyhow::Result<()> {
         let request = Request::new(ListRequest {});
 
@@ -98,7 +105,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Prints a service's manifest as pretty-printed JSON (with default
+    /// field values included).
     pub async fn handle_get_service(&mut self, name: String) -> anyhow::Result<()> {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
@@ -116,7 +124,9 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Runs the interactive OAuth login flow for `name` (via the embedded
+    /// [`oauth_flow::Authenticator`] web server) and saves the resulting
+    /// credentials back to the daemon.
     pub async fn handle_auth(&mut self, name: String) -> anyhow::Result<()> {
         let base_path = self.config.oauth.base_uri.clone();
         let key_path = self.config.oauth.key_path.clone();
@@ -157,7 +167,9 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Starts running `{service}.{operation}` (from `input`, or read from
+    /// stdin if omitted, capped at `limit` results) and prints the
+    /// resulting execution ID.
     pub async fn handle_run(
         &mut self,
         name: String,
@@ -183,7 +195,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Prints a run's output if it's completed or waiting on input, or
+    /// `{}` if it's not found, still running, or errored.
     pub async fn handle_run_result(&mut self, execution_id: String) -> anyhow::Result<()> {
         let request = Request::new(GetRunResultRequest { execution_id });
         let response = self.client.get_run_result(request).await?.into_inner();
@@ -203,7 +216,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Prints a run's current status (`Not Found`/`Running`/`Error`/
+    /// `Completed`/`Waiting`).
     pub async fn handle_run_status(&mut self, execution_id: String) -> anyhow::Result<()> {
         let request = Request::new(GetRunResultRequest { execution_id });
         let response = self.client.get_run_result(request).await?.into_inner();
@@ -229,7 +243,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Answers a run's pending `InputPrompter` prompt with `input` (or
+    /// read from stdin if omitted).
     pub async fn handle_provide_input(
         &mut self,
         execution_id: String,
@@ -250,7 +265,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Fetches `id`'s (`{service}.{operation}`) manifest and prints a
+    /// sample JSON input payload via [`stub::get_input`](crate::stub::get_input).
     pub async fn handle_input_stub(&mut self, id: String, required: bool) -> anyhow::Result<()> {
         let parts: Vec<_> = id.split('.').collect();
 
@@ -276,7 +292,8 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Fetches `id`'s (`{service}.{operation}`) manifest and prints a
+    /// sample JSON output payload via [`stub::get_output`](crate::stub::get_output).
     pub async fn handle_output_stub(&mut self, id: String) -> anyhow::Result<()> {
         let parts: Vec<_> = id.split('.').collect();
 
@@ -302,7 +319,9 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Fetches `id`'s (`{service}.{operation}`) manifest and prints its
+    /// input fields as a flat listing via
+    /// [`path::get_input_paths`](crate::path::get_input_paths).
     pub async fn handle_input_paths(&mut self, id: String, required: bool) -> anyhow::Result<()> {
         let parts: Vec<_> = id.split('.').collect();
 
@@ -335,7 +354,9 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Fetches `id`'s (`{service}.{operation}`) manifest and prints its
+    /// output fields as a flat listing via
+    /// [`path::get_output_paths`](crate::path::get_output_paths).
     pub async fn handle_output_paths(&mut self, id: String) -> anyhow::Result<()> {
         let parts: Vec<_> = id.split('.').collect();
 
@@ -368,7 +389,12 @@ impl Cli {
         Ok(())
     }
 
-    ///
+    /// Parses `input_file` (or stdin) as newline-separated
+    /// [`InputDescription`] lines, splits them into inputs and outputs,
+    /// and renders every file in `template_name`'s template directory
+    /// (under the configured template path) into a new `name` directory,
+    /// with the parsed mappings available to the template as `inputs`/
+    /// `outputs`.
     pub fn handle_generate(
         &self,
         template_name: &str,
@@ -425,23 +451,24 @@ impl Cli {
     }
 }
 
-///
+/// The data a scaffolding template is rendered with.
 #[derive(Debug, Serialize, Deserialize)]
 struct TemplateModel {
-    ///
+    /// The new service's name.
     name: String,
 
-    ///
+    /// The API name being scaffolded against.
     api: String,
 
-    ///
+    /// The parsed input-mapping lines.
     inputs: Vec<InputDescription>,
 
-    ///
+    /// The parsed output-mapping lines.
     outputs: Vec<InputDescription>,
 }
 
-///
+/// Infers a YAML schema from a JSON example payload (`input`, or read from
+/// stdin if omitted) via [`schemaify`] and prints it.
 pub fn handle_schema_convert(input: Option<String>) -> anyhow::Result<()> {
     let input = if let Some(input) = input {
         fs::read_to_string(Path::new(&input))?
@@ -459,7 +486,7 @@ pub fn handle_schema_convert(input: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-///
+/// Reads two YAML schema files and prints their [`merge`]d union.
 pub fn handle_schema_merge(left: &str, right: &str) -> anyhow::Result<()> {
     let left = fs::read_to_string(Path::new(&left))?;
     let left: Schema = serde_yaml::from_str(&left)?;
@@ -475,55 +502,60 @@ pub fn handle_schema_merge(left: &str, right: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-///
+/// An inferred JSON schema: either a single concrete type, or a `oneOf`
+/// composition when the same position held incompatible types.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(untagged)]
 enum Schema {
-    ///
+    /// A single concrete type.
     Single(SchemaObject),
 
-    ///
+    /// A `oneOf` composition of multiple possible types.
     Composite(SchemaComposite),
 }
 
-///
+/// A `oneOf` composition of possible schemas.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct SchemaComposite {
-    ///
+    /// The possible schemas, deduplicated.
     one_of: Vec<Schema>,
 }
 
-///
+/// A single concrete inferred type.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum SchemaObject {
-    ///
+    /// Inferred from a JSON `null`.
     Null,
 
-    ///
+    /// Inferred from a JSON boolean.
     Boolean,
 
     ///s
     Number,
 
-    ///
+    /// Inferred from a JSON string.
     String,
 
-    ///
+    /// Inferred from a JSON object.
     Object {
-        ///
+        /// Each property's inferred schema, keyed by name.
         properties: HashMap<String, Schema>,
     },
 
-    ///
+    /// Inferred from a JSON array, with every element's schema merged
+    /// into one.
     Array {
-        ///
+        /// The merged element schema.
         items: Box<Schema>,
     },
 }
 
-///
+/// Infers a [`Schema`] from a JSON value: a concrete type for a scalar, a
+/// per-key schema for an object, or the [`merge`]d schema of every element
+/// for an array (an empty array infers an empty object, since there's
+/// nothing to merge).
 fn schemaify(value: &serde_json::Value) -> Schema {
     match value {
         &serde_json::Value::Null => Schema::Single(SchemaObject::Null),
@@ -555,7 +587,11 @@ fn schemaify(value: &serde_json::Value) -> Schema {
     }
 }
 
-///
+/// Merges two schemas into one: identical schemas merge to themselves;
+/// two objects merge property-by-property (a property present on only one
+/// side is kept as-is); two arrays merge their item schemas; anything else
+/// incompatible becomes (or extends) a `oneOf` composition of the
+/// distinct schemas seen.
 fn merge(left: Schema, right: Schema) -> Schema {
     if left == right {
         left
