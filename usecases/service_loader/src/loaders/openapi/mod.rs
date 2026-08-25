@@ -1,4 +1,6 @@
-//!
+//! Parses an `OpenAPI` document into a [`service::CommonApi`], recursively
+//! walking paths, operations, parameters, request bodies, responses, and
+//! schemas, and resolving `$ref` references along the way.
 
 mod utils;
 
@@ -12,7 +14,10 @@ use core_entities::service;
 
 use self::utils::{default_field, handle_reference, optional_field, required_field};
 
-///
+/// Fetches and parses the `OpenAPI` document at `source`, converting it into
+/// a [`service::CommonApi`]: the base path, title/description, every
+/// path's operations, and every referenced schema encountered along the
+/// way.
 pub fn handle<R: io::Read>(
     fetcher: &dyn Fetcher<R>,
     source: &str,
@@ -60,7 +65,7 @@ pub fn handle<R: io::Read>(
     Ok(protobuf::MessageField::some(api))
 }
 
-///
+/// Extracts the first entry's `url` from an `OpenAPI` `servers` array.
 fn get_server(server: &serde_json::Value) -> error::Result<String> {
     // server.get(0).map(|s| s.url.clone()).ok_or(error::ServiceLoaderError::NotFound("Server".to_string()))
     let server = server
@@ -69,7 +74,10 @@ fn get_server(server: &serde_json::Value) -> error::Result<String> {
     required_field(server, "url")
 }
 
-///
+/// Resolves `item` (a path item, possibly a `$ref`) and converts each
+/// HTTP-verb entry it defines (get/post/put/patch/delete/head/options/
+/// trace) into an `(operationId, Operation)` pair via [`handle_operation`],
+/// sharing `item`'s path-level parameters across all of them.
 fn collect_operations<R: io::Read>(
     path: &str,
     item: &serde_json::Value,
@@ -222,7 +230,9 @@ fn collect_operations<R: io::Read>(
     Ok(result)
 }
 
-///
+/// Converts an operation's summary, description, parameters (merged with
+/// any path-level `common_params`), request body, responses, and
+/// `x-pagination` extension into `sink`.
 fn handle_operation<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::Operation,
@@ -290,7 +300,10 @@ fn handle_operation<R: io::Read>(
     Ok(())
 }
 
-///
+/// Converts an operation's `x-pagination` extension into `sink`, picking
+/// the pagination strategy (page-offset, offset, next-URL, cursor, or
+/// unpaginated) from whichever of `pageOffset`/`offset`/`nextUrl`/`cursor`
+/// is present in `source`.
 fn handle_pagination(
     source: &serde_json::Value,
     sink: &mut service::Pagination,
@@ -356,7 +369,11 @@ fn handle_pagination(
     Ok(())
 }
 
-///
+/// Resolves `source` (possibly a `$ref`) and converts its location
+/// (`header`/`query`/`path`/`cookie`), name, requiredness, description,
+/// and schema into `sink`. An unrecognized location becomes
+/// [`IN_TYPE_NONE`](service::parameter::InType::IN_TYPE_NONE) rather than
+/// erroring.
 fn handle_parameter<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::Parameter,
@@ -394,7 +411,8 @@ fn handle_parameter<R: io::Read>(
     Ok(())
 }
 
-///
+/// Resolves `source` (possibly a `$ref`) and converts its description and
+/// per-MIME-type content into `sink`.
 fn handle_request_body<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::RequestBody,
@@ -420,7 +438,9 @@ fn handle_request_body<R: io::Read>(
     Ok(())
 }
 
-///
+/// Resolves `source` (possibly a `$ref`) and converts its per-MIME-type
+/// content into `sink`. Response headers aren't represented in the
+/// protobuf schema, so they're not converted.
 fn handle_response<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::ApiResponse,
@@ -444,7 +464,7 @@ fn handle_response<R: io::Read>(
     Ok(())
 }
 
-///
+/// Converts a media type's schema (if any) into `sink`.
 fn handle_media_type<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::MediaType,
@@ -462,7 +482,12 @@ fn handle_media_type<R: io::Read>(
     Ok(())
 }
 
-///
+/// Converts a schema into `sink`. If `source` is a `$ref` (including one
+/// that resolves to a reference cycle), records it by key in `schemas` and
+/// sets `sink` to a `$ref` pointer instead of inlining it. Otherwise
+/// converts `source`'s recognized `type` (string/boolean/integer/number,
+/// recursing into array items or object properties) or, absent a `type`,
+/// its `oneOf`/`anyOf`/`allOf` composition (recursing into each branch).
 fn handle_schema<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::Schema,
