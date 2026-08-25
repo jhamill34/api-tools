@@ -30,8 +30,9 @@ extern crate alloc;
 use alloc::sync::Arc;
 use mini_v8::MiniV8;
 
-use std::{fs::File, io::Write, sync::RwLock};
+use std::sync::RwLock;
 
+use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;
 
 use lazy_static::lazy_static;
@@ -94,7 +95,7 @@ fn wrap_source_code(source: &str) -> error::Result<String> {
 /// [`execution_engine::Engine`].
 pub struct JsActionRunner {
     /// Where the `api.run` binding logs each nested call it makes.
-    logger: Arc<RwLock<File>>,
+    logger: LogWriter,
 
     /// The engine used to resolve `api.run` calls made from JavaScript.
     engine: Arc<RwLock<execution_engine::Engine>>,
@@ -104,7 +105,7 @@ impl JsActionRunner {
     /// Creates a [`JsActionRunner`] that dispatches nested calls through
     /// `engine` and logs them to `logger`.
     #[inline]
-    pub fn new(engine: Arc<RwLock<execution_engine::Engine>>, logger: Arc<RwLock<File>>) -> Self {
+    pub fn new(engine: Arc<RwLock<execution_engine::Engine>>, logger: LogWriter) -> Self {
         Self { logger, engine }
     }
 
@@ -121,7 +122,7 @@ impl JsActionRunner {
     ) -> error::Result<serde_json::Value> {
         let mv8 = MiniV8::new();
 
-        let logger = Arc::clone(&self.logger);
+        let logger = self.logger.clone();
         let engine = Arc::clone(&self.engine);
         let name = name.to_owned();
         let execution_id = ctx.execution_id.clone();
@@ -132,17 +133,9 @@ impl JsActionRunner {
             let now = chrono::offset::Local::now();
             let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-            {
-                let mut logger = logger.write().map_err(|err| {
-                    mini_v8::Error::ExternalError(Box::new(error::JsActionRunner::PoisonedLock(
-                        err.to_string(),
-                    )))
-                })?;
-
-                logger
-                    .write_all(format!("{now} ({}) [API] {id}\n", name.clone()).as_bytes())
-                    .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;
-            };
+            logger
+                .write_all(format!("{now} ({}) [API] {id}\n", name.clone()).as_bytes())
+                .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;
 
             let params = converters::from_v8(params)?;
             let options = if let Some(options) = options {

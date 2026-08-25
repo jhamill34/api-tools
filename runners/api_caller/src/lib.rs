@@ -30,11 +30,11 @@ mod constants;
 pub mod error;
 
 extern crate alloc;
-use alloc::sync::Arc;
 
-use std::{collections::HashMap, fs::File, io::Write, sync::RwLock};
+use std::collections::HashMap;
 
 use base64::Engine as _;
+use common_data_structures::log_writer::LogWriter;
 use core_entities::service::{pagination, Operation, Parameter, SwaggerService};
 use credential_entities::credentials::Authentication;
 use execution_engine::services::{DataConnectionRunner, DataConnectorBundle, EngineInputContext};
@@ -196,14 +196,10 @@ impl APICallState {
         &self,
         id: &str,
         client: &reqwest::blocking::Client,
-        log: &Arc<RwLock<File>>,
+        log: &LogWriter,
     ) -> error::Result<serde_json::Value> {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
-
-        let mut log = log
-            .write()
-            .map_err(|err| error::APICaller::PoisonedLock(err.to_string()))?;
 
         let method = self.method.parse::<reqwest::Method>()?;
         let endpoint = self.resolve_endpoint()?;
@@ -681,7 +677,7 @@ impl APICallState {
 /// connection pool) across every call it makes.
 pub struct APICaller {
     /// Where each request/response is logged.
-    log: Arc<RwLock<File>>,
+    log: LogWriter,
 
     /// The shared HTTP client every request is sent through.
     client: reqwest::blocking::Client,
@@ -692,7 +688,7 @@ impl APICaller {
     /// [`reqwest::blocking::Client`] once up front.
     #[must_use]
     #[inline]
-    pub fn new(log: Arc<RwLock<File>>) -> Self {
+    pub fn new(log: LogWriter) -> Self {
         Self {
             log,
             client: reqwest::blocking::Client::new(),
@@ -849,6 +845,7 @@ impl DataConnectionRunner for APICaller {
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpListener,
@@ -907,7 +904,7 @@ mod tests {
     #[test]
     fn reuses_the_same_http_client_across_calls() {
         let (base_url, accepted) = start_test_server();
-        let log = Arc::new(RwLock::new(tempfile::tempfile().unwrap()));
+        let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
         let caller = APICaller::new(log);
 
         caller
