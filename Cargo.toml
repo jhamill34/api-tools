@@ -22,6 +22,7 @@ members = [
 	"runners/api_caller",
 	"runners/python_runner",
 	"runners/javascript_runner",
+	"runners/lua_runner",
 	"runners/user_input",
 	"runners/filtered_runner",
 
@@ -43,6 +44,7 @@ dotenv = "0.15"
 jmespath = "0.3"
 jsonptr = "0.4.2"
 lazy_static = "1.4"
+mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
 prost = "0.11"
 protobuf = "3.2"
 protobuf-codegen = "3.2"
