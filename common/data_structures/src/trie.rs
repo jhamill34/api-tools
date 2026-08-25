@@ -1,29 +1,37 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-//!
+//! A byte-wise trie for wildcard-aware string-key lookups — e.g. matching a
+//! concrete key like `"application/json"` against a registered pattern like
+//! `"application/*"`.
 
 use std::collections::HashMap;
 
-///
+/// Configures which bytes act as wildcards when inserting into or looking up
+/// keys in a [`Trie`].
 #[non_exhaustive]
 pub struct Config {
-    ///
+    /// Matches exactly one arbitrary byte at its position — e.g. with
+    /// `b'x'`, the pattern `"2xx"` matches `"201"`.
     pub single_wildcard_byte: u8,
 
-    ///
+    /// Matches any remaining suffix of the key — e.g. with `b'*'`, the
+    /// pattern `"application/*"` matches `"application/json"`.
     pub multi_wildcard_byte: u8,
 }
 
-///
+/// A byte-wise trie mapping string keys to values of type `T`, supporting
+/// the two wildcard bytes configured in [`Config`].
 #[non_exhaustive]
 pub struct Trie<'trie, T> {
-    ///
+    /// The value stored at this exact node, if a key ending here has been
+    /// inserted.
     pub value: Option<T>,
 
-    ///
+    /// Child nodes keyed by the next byte of the key.
     pub children: HashMap<u8, Trie<'trie, T>>,
 
-    ///
+    /// The wildcard configuration shared by this node and all its
+    /// descendants.
     pub config: &'trie Config,
 }
 
@@ -38,7 +46,7 @@ impl<'trie, T> Default for Trie<'trie, T> {
 }
 
 impl<'trie, T> Trie<'trie, T> {
-    ///
+    /// Creates an empty trie using the given wildcard `config`.
     #[inline]
     #[must_use]
     pub fn new(config: &'trie Config) -> Self {
@@ -49,14 +57,14 @@ impl<'trie, T> Trie<'trie, T> {
         }
     }
 
-    ///
+    /// Inserts `value` at `key`, overwriting any value already stored there.
     #[inline]
     pub fn insert(&mut self, key: &str, value: T) {
         let chars = key.as_bytes();
         self.insert_bytes(chars, value);
     }
 
-    ///
+    /// Recursive, byte-at-a-time implementation of [`insert`](Trie::insert).
     #[inline]
     fn insert_bytes(&mut self, key: &[u8], value: T) {
         if let Some(next) = key.first() {
@@ -72,14 +80,15 @@ impl<'trie, T> Trie<'trie, T> {
         }
     }
 
-    ///
+    /// Looks up the value stored for `key`, falling back to the nearest
+    /// matching wildcard entry if there's no exact match.
     #[inline]
     pub fn find(&self, key: &str) -> Option<&T> {
         let chars = key.as_bytes();
         self.find_bytes(chars)
     }
 
-    ///
+    /// Recursive, byte-at-a-time implementation of [`find`](Trie::find).
     #[inline]
     fn find_bytes(&self, key: &[u8]) -> Option<&T> {
         if let Some(next) = key.first() {

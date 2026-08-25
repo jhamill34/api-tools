@@ -13,6 +13,8 @@
     clippy::too_many_lines
 )]
 
+//! Small, dependency-free data structures shared across the workspace.
 //!
+//! Currently just a byte-wise, wildcard-aware [`trie`](trie::Trie).
 
 pub mod trie;
