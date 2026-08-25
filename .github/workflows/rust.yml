@@ -44,7 +44,58 @@ jobs:
 
       - name: Testing
         run: cargo test
-  
+
+      - name: Smoke test apid startup
+        run: |
+          set -e
+
+          smoke_dir="${RUNNER_TEMP}/apid-smoke"
+          mkdir -p "${smoke_dir}/connectors"
+
+          cat > "${smoke_dir}/config.toml" <<EOF
+          [connector]
+          path = "${smoke_dir}/connectors"
+
+          [log]
+          api_path = "${smoke_dir}/api.log"
+          workflow_path = "${smoke_dir}/workflow.log"
+
+          [server]
+          port = 50098
+          host = "127.0.0.1"
+          EOF
+
+          cargo build -p apid
+
+          APID_CONFIG_PATH="${smoke_dir}/config.toml" HOME="${smoke_dir}" \
+            ./target/debug/apid > "${smoke_dir}/apid.log" 2>&1 &
+          apid_pid=$!
+
+          started=0
+          for _ in $(seq 1 20); do
+            if ! kill -0 "${apid_pid}" 2>/dev/null; then
+              echo "apid exited before it started listening:"
+              cat "${smoke_dir}/apid.log"
+              exit 1
+            fi
+            if nc -z 127.0.0.1 50098 2>/dev/null; then
+              started=1
+              break
+            fi
+            sleep 0.5
+          done
+
+          kill "${apid_pid}" 2>/dev/null || true
+          wait "${apid_pid}" 2>/dev/null || true
+
+          if [ "${started}" -ne 1 ]; then
+            echo "apid never started listening on its configured port:"
+            cat "${smoke_dir}/apid.log"
+            exit 1
+          fi
+
+          echo "apid started and bound its gRPC port successfully"
+
   build-apid-image:
     name: build-apid-image
     runs-on: ubuntu-latest
