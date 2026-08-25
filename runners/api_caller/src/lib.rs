@@ -22,7 +22,9 @@
     clippy::ref_patterns,
 )]
 
-//!
+//! A [`DataConnectionRunner`] adapter that resolves an operation's request
+//! (method, endpoint, params, auth) and executes it over HTTP, handling
+//! pagination across multiple requests when configured.
 
 mod constants;
 pub mod error;
@@ -38,7 +40,9 @@ use credential_entities::credentials::Authentication;
 use execution_engine::services::{DataConnectionRunner, DataConnectorBundle, EngineInputContext};
 use http::{HeaderMap, HeaderName, HeaderValue};
 
-///
+/// Converts a scalar JSON value to its string form, for use as a header,
+/// query, or path parameter. Errors on an array or object, which have no
+/// unambiguous scalar representation.
 fn simplify_value(value: &serde_json::Value) -> error::Result<String> {
     match value {
         &serde_json::Value::String(ref val) => Ok(val.to_string()),
@@ -51,7 +55,8 @@ fn simplify_value(value: &serde_json::Value) -> error::Result<String> {
     }
 }
 
-///
+/// Applies [`simplify_value`] across a map of JSON values, e.g. a set of
+/// path or query parameters.
 fn simplify_value_map<'item, I>(values: I) -> error::Result<HashMap<String, String>>
 where
     I: Iterator<Item = (&'item String, &'item serde_json::Value)>,
@@ -61,7 +66,12 @@ where
         .collect()
 }
 
-///
+/// Extracts the paginated results from a raw response, by resolving the
+/// configured pagination strategy's `resultsPath` (stripped of its
+/// `$response.body#` runtime-expression prefix) as a JSON pointer into
+/// `result`. Falls back to the whole `result` when there's no pagination
+/// configured, the path resolves to the document root, or the strategy is
+/// next-URL-based (which has no separate results path to extract).
 fn find_results<'item>(
     result: &'item serde_json::Value,
     pagination_config: &Option<pagination::Value>,
@@ -152,30 +162,36 @@ fn find_results<'item>(
     Ok(result)
 }
 
-///
+/// The in-progress state of a single HTTP request being built up from an
+/// operation's manifest and the caller's runtime params, one page at a
+/// time.
 #[derive(Default)]
 struct APICallState {
-    ///
+    /// The resolved HTTP method name (e.g. `"GET"`).
     method: String,
 
-    ///
+    /// The resolved request URL, before path-parameter substitution and
+    /// query-string assembly.
     endpoint: String,
 
-    ///
+    /// Values to send as HTTP headers.
     header_params: HashMap<String, serde_json::Value>,
 
-    ///
+    /// Values to send as query-string parameters.
     query_params: HashMap<String, serde_json::Value>,
 
-    ///
+    /// Values to substitute into `{placeholder}` segments of the endpoint.
     path_params: HashMap<String, serde_json::Value>,
 
-    ///
+    /// The JSON request body, if any.
     body: Option<serde_json::Value>,
 }
 
 impl APICallState {
-    ///
+    /// Sends the built-up request over `client`, logging the request and
+    /// response to `log`, and returns the parsed response body (or
+    /// [`serde_json::Value::Null`] for an empty body, or the raw text
+    /// wrapped in a JSON string if it isn't valid JSON).
     fn send(
         &self,
         id: &str,
@@ -254,7 +270,9 @@ impl APICallState {
         }
     }
 
-    ///
+    /// Substitutes `path_params` into `endpoint`'s `{placeholder}` segments
+    /// and appends `query_params` as a query string, producing the final
+    /// request URL.
     fn resolve_endpoint(&self) -> error::Result<reqwest::Url> {
         let mut endpoint = self.endpoint.clone();
 
@@ -276,7 +294,8 @@ impl APICallState {
         Ok(url)
     }
 
-    ///
+    /// Joins `base_url` and `path` (trimming the shared `/` between them)
+    /// into `endpoint`.
     fn set_endpoint(&mut self, base_url: &str, path: &str) {
         let base_url = base_url.strip_suffix('/').unwrap_or(base_url);
         let path = path.strip_prefix('/').unwrap_or(path);
@@ -284,7 +303,9 @@ impl APICallState {
         self.endpoint = format!("{base_url}/{path}");
     }
 
-    ///
+    /// Resolves `operation.method` to its HTTP method name. Errors on the
+    /// unset/default variant, since there's no sensible method to fall
+    /// back to.
     fn set_method(&mut self, operation: &Operation) -> error::Result<()> {
         match operation.method.enum_value_or_default() {
             core_entities::service::operation::HttpMethodType::POST => {
@@ -319,7 +340,8 @@ impl APICallState {
         Ok(())
     }
 
-    ///
+    /// Sets the request body, adding a `Content-Type: application/json`
+    /// header when `body` is present.
     fn set_body(&mut self, body: Option<serde_json::Value>) {
         if body.is_some() {
             self.header_params.insert(
@@ -330,7 +352,12 @@ impl APICallState {
         self.body = body;
     }
 
-    ///
+    /// Looks up each of `parameters` in `params` and routes its value to
+    /// the matching query/header/path map. Errors if a `required`
+    /// parameter is missing and `fail_on_required` is set, or if a
+    /// parameter's location isn't a query/header/path (e.g. cookie, which
+    /// this runner doesn't support). Always sets a default `User-Agent`
+    /// header.
     fn collect_params(
         &mut self,
         params: &serde_json::Value,
@@ -376,7 +403,12 @@ impl APICallState {
         Ok(())
     }
 
-    ///
+    /// Applies `manifest`'s configured auth strategy (header, query
+    /// parameter, path parameter, HTTP basic, OAuth bearer, or
+    /// multi-header) using `creds`, inserting the resulting values into the
+    /// matching param map. The unset auth type is a deliberate no-op;
+    /// any other value that doesn't map to a known auth type errors
+    /// instead of silently skipping authentication.
     fn handle_auth(
         &mut self,
         manifest: &SwaggerService,
@@ -490,7 +522,10 @@ impl APICallState {
         Ok(())
     }
 
-    ///
+    /// Prepares the next page's request: applies the configured pagination
+    /// strategy's parameters (page number, offset, limit, or a cursor read
+    /// from `previous_response`) as runtime expressions, and returns the
+    /// page size that was requested (`0` if unpaginated).
     fn handle_pagination(
         &mut self,
         pagination_config: &Option<pagination::Value>,
@@ -581,7 +616,11 @@ impl APICallState {
         Ok(requested)
     }
 
-    ///
+    /// Applies `value` at the location named by a runtime `expression`
+    /// (`$request.query.*`, `$request.path.*`, `$request.header.*`, or
+    /// `$request.body#{pointer}`), or — for a plain parameter name rather
+    /// than a `$request.` expression — resolves it against `parameter`'s
+    /// manifest definitions via [`collect_params`](APICallState::collect_params).
     fn apply_runtime_expression(
         &mut self,
         expression: &str,
@@ -637,17 +676,20 @@ impl APICallState {
     }
 }
 
-///
+/// A [`DataConnectionRunner`] that executes an operation as one or more
+/// HTTP requests, reusing a single [`reqwest::blocking::Client`] (and its
+/// connection pool) across every call it makes.
 pub struct APICaller {
-    ///
+    /// Where each request/response is logged.
     log: Arc<RwLock<File>>,
 
-    ///
+    /// The shared HTTP client every request is sent through.
     client: reqwest::blocking::Client,
 }
 
 impl APICaller {
-    ///
+    /// Creates an [`APICaller`] that logs to `log`, building its
+    /// [`reqwest::blocking::Client`] once up front.
     #[must_use]
     #[inline]
     pub fn new(log: Arc<RwLock<File>>) -> Self {
@@ -657,7 +699,13 @@ impl APICaller {
         }
     }
 
-    ///
+    /// Builds and sends `operation_name`'s request(s) against `bundle`,
+    /// paging through results (per the operation's pagination strategy)
+    /// until a page comes back short, the configured `limit` is reached, or
+    /// pagination isn't configured — in which case exactly one request is
+    /// sent. Returns the raw first response unchanged if `ctx.raw_response`
+    /// is set; otherwise returns the accumulated, limit-truncated results
+    /// as a JSON array.
     fn run_internal(
         &self,
         name: &str,
