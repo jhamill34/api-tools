@@ -44,6 +44,9 @@ anyhow = { workspace = true, features = ["backtrace"] }
 
 dhat = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 dhat-heap = []
 dhat-ad-hoc = []
