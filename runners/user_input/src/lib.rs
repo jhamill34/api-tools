@@ -18,7 +18,8 @@
     clippy::min_ident_chars,
 )]
 
-//!
+//! An [`InputPrompter`] adapter that pauses a running workflow and waits for
+//! an external caller to supply the answer.
 
 pub mod error;
 
@@ -36,24 +37,32 @@ use std::{
 
 use execution_engine::services::InputPrompter;
 
-///
+/// Shared, thread-safe map from an in-flight execution's ID to the prompt
+/// `params` it's waiting on and the channel its answer should be sent back
+/// on. Populated by [`UserInput`], and drained from the other end whenever
+/// an external caller answers a pending prompt.
 pub type Signals = Arc<Mutex<HashMap<String, (serde_json::Value, Sender<serde_json::Value>)>>>;
 
-///
+/// An [`InputPrompter`] that blocks the calling execution on a channel until
+/// an external caller answers via the shared [`Signals`] map, or the wait
+/// times out.
 pub struct UserInput {
-    ///
+    /// The map of pending prompts this instance registers into and reads
+    /// answers from.
     signals: Signals,
 }
 
 impl UserInput {
-    ///
+    /// Creates a [`UserInput`] backed by the given, externally-shared
+    /// `signals` map.
     #[must_use]
     #[inline]
     pub fn new(signals: Signals) -> Self {
         Self { signals }
     }
 
-    ///
+    /// Prompts and waits up to 60 seconds for an answer. See
+    /// [`run_internal_with_timeout`](UserInput::run_internal_with_timeout).
     fn run_internal(
         &self,
         params: serde_json::Value,
@@ -62,7 +71,10 @@ impl UserInput {
         self.run_internal_with_timeout(params, ctx, Duration::from_secs(60))
     }
 
-    ///
+    /// Registers `params` under `ctx.execution_id` in [`signals`](UserInput),
+    /// blocks for up to `timeout` waiting for an answer, then removes the
+    /// entry again — including when the wait times out, so a timed-out
+    /// prompt never leaves a stale entry behind.
     fn run_internal_with_timeout(
         &self,
         params: serde_json::Value,
