@@ -1,6 +1,8 @@
 #![allow(clippy::std_instead_of_core)]
 
-//!
+//! `pyo3` classes installed into a running script's module namespace as the
+//! `api`/`workflow`/`action`/`task` bindings, giving the script a way to
+//! call back into the engine and to log activity.
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -17,25 +19,26 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 use serde_json::Value;
 
-///
+/// The `task` binding: a factory a script uses to create [`Task`] handles.
 #[pyclass]
 pub struct TaskBinding {
-    ///
+    /// The `{service}.{operation}` identifier of the running script.
     pub name: String,
 
-    ///
+    /// The engine used to resolve calls made from created tasks.
     pub engine: Arc<RwLock<execution_engine::Engine>>,
 
-    ///
+    /// The execution context created tasks run under.
     pub ctx: execution_engine::services::EngineInputContext,
 
-    ///
+    /// Where created tasks log activity.
     pub logger: Arc<RwLock<File>>,
 }
 
 #[pymethods]
 impl TaskBinding {
-    ///
+    /// Creates a [`Task`] bound to operation `id` and `params`, sharing
+    /// this binding's engine, logger, and parent context.
     pub fn create(&self, id: String, params: &PyAny) -> Task {
         Task {
             id,
@@ -52,31 +55,36 @@ impl TaskBinding {
     }
 }
 
-///
+/// A pending call to operation `id` with `params`, created via
+/// [`TaskBinding::create`], that a script resumes later — after a delay or
+/// after collecting user input.
 #[pyclass]
 pub struct Task {
-    ///
+    /// The `{service}.{operation}` identifier of the script that created
+    /// this task.
     pub name: String,
 
-    ///
+    /// The engine used to run this task's operation.
     pub engine: Arc<RwLock<execution_engine::Engine>>,
 
-    ///
+    /// The execution context this task runs under.
     pub ctx: execution_engine::services::EngineInputContext,
 
-    ///
+    /// Where this task logs activity.
     pub logger: Arc<RwLock<File>>,
 
-    ///
+    /// The operation ID to invoke.
     pub id: String,
 
-    ///
+    /// The parameters to invoke it with.
     pub params: Py<PyAny>,
 }
 
 #[pymethods]
 impl Task {
-    ///
+    /// Sleeps for `delay` `unit`s (`MINUTE`/`SECOND`/`MILLISECOND`/
+    /// `NANOSECOND`; any other value is a no-op), then runs this task's
+    /// operation and returns its result.
     #[pyo3(name = "continueAfter")]
     pub fn continue_after(&self, py: Python<'_>, delay: u64, unit: &str) -> PyResult<Py<PyAny>> {
         let now = chrono::offset::Local::now();
@@ -127,7 +135,11 @@ impl Task {
         converters::from_value(py, result)
     }
 
-    ///
+    /// Runs the built-in `$input` operation with `blocks` to collect user
+    /// input, merges the result into this task's params under
+    /// `input_results`, then runs this task's operation with the merged
+    /// params and returns its result. Errors if this task's params aren't
+    /// a JSON object, since there's nowhere to merge the input into.
     #[pyo3(name = "continueAfterUserInput")]
     pub fn continue_after_user_input(&self, py: Python<'_>, blocks: &PyAny) -> PyResult<Py<PyAny>> {
         let now = chrono::offset::Local::now();
@@ -174,25 +186,27 @@ impl Task {
     }
 }
 
-///
+/// The `api` binding: lets a script invoke another already-registered
+/// operation synchronously and get its result back.
 #[pyclass]
 pub struct APIBindingWraper {
-    ///
+    /// The `{service}.{operation}` identifier of the running script.
     pub name: String,
 
-    ///
+    /// The engine used to resolve `run` calls.
     pub engine: Arc<RwLock<execution_engine::Engine>>,
 
-    ///
+    /// The execution context `run` calls run under.
     pub ctx: execution_engine::services::EngineInputContext,
 
-    ///
+    /// Where each call is logged.
     pub logger: Arc<RwLock<File>>,
 }
 
 #[pymethods]
 impl APIBindingWraper {
-    ///
+    /// Invokes operation `id` with `params` (and optional `options`, e.g.
+    /// a result `limit`) and converts its result back to a Python object.
     pub fn run(
         &self,
         py: Python<'_>,
@@ -232,31 +246,39 @@ impl APIBindingWraper {
     }
 }
 
-///
+/// The `workflow` binding: exposes `workflow.log` for reporting the
+/// script's overall outcome and progress.
 #[pyclass]
 pub struct Workflow {
-    ///
+    /// The workflow-level logger.
     #[pyo3(get)]
     pub log: WorkflowLogger,
 }
 
-///
+/// Reports a running script's overall outcome (`done`/`fail`) and
+/// progress (`info`/`warn`/`status`), writing each call to the shared log
+/// and, for `done`/`fail`, recording the outcome in `output` so
+/// [`PyActionRunner::run_internal`](crate::PyActionRunner) can return it
+/// as the script's result instead of its literal return value.
 #[pyclass]
 #[derive(Clone)]
 pub struct WorkflowLogger {
-    ///
+    /// The `{service}.{operation}` identifier of the running script.
     pub name: String,
 
-    ///
+    /// Where every call is logged.
     pub loggers: Arc<RwLock<File>>,
 
-    ///
+    /// The output dict a `done`/`fail` call's outcome is recorded into.
     pub output: Py<PyDict>,
 }
 
 #[pymethods]
 impl WorkflowLogger {
-    ///
+    /// Reports failure: logs `display` at [`constants::LOG_ERROR`], and
+    /// records `standard_output_params`/`custom_output_params` (if given)
+    /// under [`RESPONSE_ERROR_KEY`](constants::RESPONSE_ERROR_KEY) in
+    /// `output`.
     fn fail(
         &mut self,
         py: Python<'_>,
@@ -282,7 +304,11 @@ impl WorkflowLogger {
         Ok(py.None())
     }
 
-    ///
+    /// Reports success: logs `display` (defaulting to `"done"`) at
+    /// [`constants::LOG_SUCCESS`], and records
+    /// `standard_output_params`/`custom_output_params` (if given) under
+    /// [`RESPONSE_SUCCESS_KEY`](constants::RESPONSE_SUCCESS_KEY) in
+    /// `output`.
     fn done(
         &mut self,
         py: Python<'_>,
@@ -312,26 +338,31 @@ impl WorkflowLogger {
         Ok(py.None())
     }
 
-    ///
+    /// Logs `display` at [`constants::LOG_WARN`], without affecting the
+    /// script's recorded outcome.
     fn warn(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.print_display(display, constants::LOG_WARN)?;
         Ok(py.None())
     }
 
-    ///
+    /// Logs `display` at [`constants::LOG_STATUS`], tagged with
+    /// `groupId`, without affecting the script's recorded outcome.
     #[allow(non_snake_case)]
     fn status(&mut self, py: Python<'_>, display: &PyAny, groupId: &str) -> PyResult<Py<PyAny>> {
         self.print_display(display, &format!("{}={groupId}", constants::LOG_STATUS))?;
         Ok(py.None())
     }
 
-    ///
+    /// Logs `display` at [`constants::LOG_INFO`], without affecting the
+    /// script's recorded outcome.
     fn info(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.print_display(display, constants::LOG_INFO)?;
         Ok(py.None())
     }
 
-    ///
+    /// Writes a timestamped log line for `display` (either a string, or a
+    /// dict with a string `summary` key) at `log_level`. Errors if
+    /// `display` is neither shape.
     fn print_display(&mut self, display: &PyAny, log_level: &str) -> PyResult<()> {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
@@ -366,55 +397,59 @@ impl WorkflowLogger {
     }
 }
 
-///
+/// The `action` binding: exposes `action.log` for reporting a single
+/// action-level log entry (as opposed to the workflow-level outcome
+/// reported via [`Workflow`]).
 #[pyclass]
 pub struct Action {
-    ///
+    /// The action-level logger.
     #[pyo3(get)]
     pub log: ActionLogger,
 }
 
 #[pymethods]
 impl Action {
-    ///
+    /// Logs `display` at [`constants::LOG_SUCCESS`].
     fn post(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.log.print_display(display, constants::LOG_SUCCESS)?;
         Ok(py.None())
     }
 }
 
-///
+/// Writes action-level log entries to the shared log file.
 #[pyclass]
 #[derive(Clone)]
 pub struct ActionLogger {
-    ///
+    /// The `{service}.{operation}` identifier of the running script.
     pub name: String,
 
-    ///
+    /// Where every call is logged.
     pub logger: Arc<RwLock<File>>,
 }
 
 #[pymethods]
 impl ActionLogger {
-    ///
+    /// Logs `display` at [`constants::LOG_ERROR`].
     fn error(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.print_display(display, constants::LOG_ERROR)?;
         Ok(py.None())
     }
 
-    ///
+    /// Logs `display` at [`constants::LOG_WARN`].
     fn warn(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.print_display(display, constants::LOG_WARN)?;
         Ok(py.None())
     }
 
-    ///
+    /// Logs `display` at [`constants::LOG_INFO`].
     fn info(&mut self, py: Python<'_>, display: &PyAny) -> PyResult<Py<PyAny>> {
         self.print_display(display, constants::LOG_INFO)?;
         Ok(py.None())
     }
 
-    ///
+    /// Writes a timestamped log line for `display` (either a string, or a
+    /// dict with a string `summary` key) at `log_level`. Errors if
+    /// `display` is neither shape.
     fn print_display(&mut self, display: &PyAny, log_level: &str) -> PyResult<()> {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
