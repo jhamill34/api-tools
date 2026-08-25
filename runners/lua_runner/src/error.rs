@@ -16,6 +16,11 @@ pub enum LuaActionRunner {
     /// The script's return value couldn't be converted to JSON.
     #[error("Unable to convert Lua return value to JSON: {0}")]
     ConversionError(String),
+
+    /// The shared engine's lock was poisoned by a panic in another
+    /// thread while holding it.
+    #[error("Get out! The lock has been poisoned: {0}")]
+    PoisonedLock(String),
 }
 
 impl From<mlua::Error> for LuaActionRunner {

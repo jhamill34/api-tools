@@ -429,7 +429,7 @@ fn construct_execution_engine(
         javascript_runner::JsActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
     #[cfg(feature = "lua")]
-    let lua_runner = lua_runner::LuaActionRunner::new();
+    let lua_runner = lua_runner::LuaActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
     #[cfg(feature = "input")]
     let input_handler = Box::new(user_input::UserInput::new(signals));

@@ -1387,10 +1387,14 @@ dependencies = [
 name = "lua_runner"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "common_data_structures",
+ "core_entities",
+ "credential_entities",
  "execution_engine",
  "mlua",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
