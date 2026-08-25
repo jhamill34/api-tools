@@ -7,13 +7,14 @@
 extern crate alloc;
 use alloc::sync::Arc;
 
-use std::io::Write;
 use std::sync::RwLock;
 use std::thread;
 
 use core::time::Duration;
 
-use super::{constants, converters, File};
+use common_data_structures::log_writer::LogWriter;
+
+use super::{constants, converters};
 use pyo3::exceptions::{PyArithmeticError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -32,7 +33,7 @@ pub struct TaskBinding {
     pub ctx: execution_engine::services::EngineInputContext,
 
     /// Where created tasks log activity.
-    pub logger: Arc<RwLock<File>>,
+    pub logger: LogWriter,
 }
 
 #[pymethods]
@@ -50,7 +51,7 @@ impl TaskBinding {
                 self.ctx.execution_id.clone(),
                 false,
             ),
-            logger: Arc::<RwLock<File>>::clone(&self.logger),
+            logger: self.logger.clone(),
         }
     }
 }
@@ -71,7 +72,7 @@ pub struct Task {
     pub ctx: execution_engine::services::EngineInputContext,
 
     /// Where this task logs activity.
-    pub logger: Arc<RwLock<File>>,
+    pub logger: LogWriter,
 
     /// The operation ID to invoke.
     pub id: String,
@@ -90,15 +91,8 @@ impl Task {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        {
-            let mut logger = self
-                .logger
-                .write()
-                .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-            logger
-                .write_all(format!("{now} ({}) [TASK|WAIT] {}\n", self.name, self.id).as_bytes())?;
-        };
+        self.logger
+            .write_all(format!("{now} ({}) [TASK|WAIT] {}\n", self.name, self.id).as_bytes())?;
 
         match unit {
             "MINUTE" => {
@@ -145,16 +139,8 @@ impl Task {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        {
-            let mut logger = self
-                .logger
-                .write()
-                .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-            logger.write_all(
-                format!("{now} ({}) [TASK|INPUT] {}\n", self.name, self.id).as_bytes(),
-            )?;
-        };
+        self.logger
+            .write_all(format!("{now} ({}) [TASK|INPUT] {}\n", self.name, self.id).as_bytes())?;
 
         let blocks = converters::from_py(blocks)?;
 
@@ -200,7 +186,7 @@ pub struct APIBindingWraper {
     pub ctx: execution_engine::services::EngineInputContext,
 
     /// Where each call is logged.
-    pub logger: Arc<RwLock<File>>,
+    pub logger: LogWriter,
 }
 
 #[pymethods]
@@ -217,14 +203,8 @@ impl APIBindingWraper {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        {
-            let mut logger = self
-                .logger
-                .write()
-                .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-            logger.write_all(format!("{now} ({}) [API] {id}\n", self.name).as_bytes())?;
-        };
+        self.logger
+            .write_all(format!("{now} ({}) [API] {id}\n", self.name).as_bytes())?;
 
         let params = converters::from_py(params)?;
 
@@ -267,7 +247,7 @@ pub struct WorkflowLogger {
     pub name: String,
 
     /// Where every call is logged.
-    pub loggers: Arc<RwLock<File>>,
+    pub loggers: LogWriter,
 
     /// The output dict a `done`/`fail` call's outcome is recorded into.
     pub output: Py<PyDict>,
@@ -367,11 +347,6 @@ impl WorkflowLogger {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        let mut logger = self
-            .loggers
-            .write()
-            .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
         if display.is_instance_of::<PyDict>()? {
             let display = display.downcast::<PyDict>()?;
             let summary = display
@@ -380,13 +355,13 @@ impl WorkflowLogger {
                 .and_then(|s| s.to_str().ok())
                 .ok_or_else(|| PyTypeError::new_err("Unable to find summary in display object"))?;
 
-            logger.write_all(
+            self.loggers.write_all(
                 format!("{now} ({}) [workflow|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else if display.is_instance_of::<PyString>()? {
             let summary = display.downcast::<PyString>()?.to_str()?;
 
-            logger.write_all(
+            self.loggers.write_all(
                 format!("{now} ({}) [workflow|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else {
@@ -424,7 +399,7 @@ pub struct ActionLogger {
     pub name: String,
 
     /// Where every call is logged.
-    pub logger: Arc<RwLock<File>>,
+    pub logger: LogWriter,
 }
 
 #[pymethods]
@@ -454,11 +429,6 @@ impl ActionLogger {
         let now = chrono::offset::Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        let mut logger = self
-            .logger
-            .write()
-            .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
         if display.is_instance_of::<PyDict>()? {
             let display = display.downcast::<PyDict>()?;
             let summary = display
@@ -467,13 +437,13 @@ impl ActionLogger {
                 .and_then(|s| s.to_str().ok())
                 .ok_or_else(|| PyTypeError::new_err("Unable to find summary in display object"))?;
 
-            logger.write_all(
+            self.logger.write_all(
                 format!("{now} ({}) [action|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else if display.is_instance_of::<PyString>()? {
             let summary = display.downcast::<PyString>()?.to_str()?;
 
-            logger.write_all(
+            self.logger.write_all(
                 format!("{now} ({}) [action|{log_level}]: {summary}\n", self.name).as_bytes(),
             )?;
         } else {

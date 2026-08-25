@@ -29,8 +29,9 @@ pub mod error;
 extern crate alloc;
 use alloc::{rc::Rc, sync::Arc};
 
+use common_data_structures::log_writer::LogWriter;
 use lazy_static::lazy_static;
-use std::{fs::File, sync::RwLock};
+use std::sync::RwLock;
 
 use execution_engine::services::FilteredRunner;
 use regex::Regex;
@@ -46,7 +47,7 @@ lazy_static! {
 /// output fields.
 pub struct APIWrapper {
     /// Currently unused; kept for parity with the other runners' constructors.
-    _log: Arc<RwLock<File>>,
+    _log: LogWriter,
 
     /// The engine used to invoke the wrapped operation.
     engine: Arc<RwLock<execution_engine::Engine>>,
@@ -57,7 +58,7 @@ impl APIWrapper {
     /// `engine`.
     #[must_use]
     #[inline]
-    pub fn new(log: Arc<RwLock<File>>, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
+    pub fn new(log: LogWriter, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
         Self { _log: log, engine }
     }
 

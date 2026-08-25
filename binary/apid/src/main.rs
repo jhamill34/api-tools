@@ -403,30 +403,36 @@ fn construct_execution_engine(
     signals: Signals,
     config: &Configuration,
 ) -> anyhow::Result<Arc<RwLock<execution_engine::Engine>>> {
-    let workflow_logger = Arc::new(RwLock::new(File::create(config.log.workflow_path.clone())?));
+    let (workflow_logger, _workflow_logger_handle) =
+        common_data_structures::log_writer::LogWriter::spawn(File::create(
+            config.log.workflow_path.clone(),
+        )?);
 
-    let api_logger = Arc::new(RwLock::new(File::create(config.log.api_path.clone())?));
+    let (api_logger, _api_logger_handle) = common_data_structures::log_writer::LogWriter::spawn(
+        File::create(config.log.api_path.clone())?,
+    );
 
     let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
         lookup,
-        Arc::clone(&workflow_logger),
+        workflow_logger.clone(),
     )));
 
     let connector = Box::new(api_caller::APICaller::new(api_logger));
 
     #[cfg(feature = "python")]
     let py_runner =
-        python_runner::PyActionRunner::new(Arc::clone(&workflow_logger), Arc::clone(&engine));
+        python_runner::PyActionRunner::new(workflow_logger.clone(), Arc::clone(&engine));
 
     #[cfg(feature = "javascript")]
     let js_runner =
-        javascript_runner::JsActionRunner::new(Arc::clone(&engine), Arc::clone(&workflow_logger));
+        javascript_runner::JsActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
     #[cfg(feature = "input")]
     let input_handler = Box::new(user_input::UserInput::new(signals));
 
     #[cfg(feature = "wrapper")]
-    let api_wrapper = filtered_runner::APIWrapper::new(workflow_logger, Arc::clone(&engine));
+    let api_wrapper =
+        filtered_runner::APIWrapper::new(workflow_logger.clone(), Arc::clone(&engine));
 
     {
         let mut engine = engine

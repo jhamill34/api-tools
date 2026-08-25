@@ -28,17 +28,13 @@ mod constants;
 extern crate alloc;
 use alloc::sync::Arc;
 
+use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
 use services::{
     CodeRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext, EngineLookup,
     FilteredRunner, InputPrompter, ScriptRunner,
 };
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::Write,
-    sync::{Mutex, RwLock},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use chrono::offset::Local;
 use core_entities::service::{code_resource::Language, service_manifest_latest};
@@ -52,7 +48,7 @@ pub struct Engine {
     lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>,
 
     /// Where every dispatched run is logged.
-    logger: Arc<RwLock<File>>,
+    logger: LogWriter,
 
     /// Handles `OpenAPI` (`Swagger`) operations, if registered.
     connector: Option<Box<dyn DataConnectionRunner + Send + Sync>>,
@@ -75,10 +71,7 @@ impl Engine {
     /// Creates an [`Engine`] with no adapters registered yet; use the
     /// `register_*` methods to add them.
     #[inline]
-    pub fn new(
-        lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>,
-        logger: Arc<RwLock<File>>,
-    ) -> Self {
+    pub fn new(lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>, logger: LogWriter) -> Self {
         Self {
             lookup,
             logger,
@@ -332,17 +325,14 @@ impl Engine {
         }
     }
 
-    /// Writes a timestamped `(action_type) [status] id` line to the shared
-    /// log file.
+    /// Queues a timestamped `(action_type) [status] id` line to the shared
+    /// log writer.
     fn log(&self, id: &str, action_type: &str, status: &str) -> error::Result<()> {
         let now = Local::now();
         let now = now.format(constants::DATETIME_FORMAT).to_string();
 
-        let mut logger = self
-            .logger
-            .write()
-            .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
-        logger.write_all(format!("{now} ({action_type}) [{status}] {id}\n").as_bytes())?;
+        self.logger
+            .write_all(format!("{now} ({action_type}) [{status}] {id}\n").as_bytes())?;
 
         Ok(())
     }
@@ -380,6 +370,47 @@ mod tests {
         assert!(
             matches!(result, Err(error::ExecutionEngine::InvalidIdentifier(_))),
             "expected InvalidIdentifier, got {result:?}"
+        );
+    }
+
+    struct FakeLookup;
+
+    impl EngineLookup for FakeLookup {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            None
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    #[test]
+    fn log_queues_a_line_through_the_shared_log_writer_instead_of_blocking_on_a_lock() {
+        let file = tempfile::tempfile().unwrap();
+        let (writer, handle) =
+            common_data_structures::log_writer::LogWriter::spawn(file.try_clone().unwrap());
+
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(FakeLookup));
+        let engine = Engine::new(lookup, writer.clone());
+
+        engine.log("svc.op", "ACTION", "STARTED").unwrap();
+
+        drop(writer);
+        drop(engine);
+        handle.join().unwrap();
+
+        let mut file = file;
+        let mut contents = String::new();
+        std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0)).unwrap();
+        std::io::Read::read_to_string(&mut file, &mut contents).unwrap();
+
+        assert!(
+            contents.contains("(ACTION) [STARTED] svc.op"),
+            "expected the log line in {contents:?}"
         );
     }
 }

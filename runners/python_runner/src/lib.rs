@@ -30,9 +30,9 @@ pub mod error;
 extern crate alloc;
 use alloc::sync::Arc;
 
-use std::fs::File;
 use std::sync::RwLock;
 
+use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
@@ -63,7 +63,7 @@ pub struct PyActionRunner {
     engine: Arc<RwLock<execution_engine::Engine>>,
 
     /// Where the script's bindings log activity.
-    loggers: Arc<RwLock<File>>,
+    loggers: LogWriter,
 }
 
 impl PyActionRunner {
@@ -71,7 +71,7 @@ impl PyActionRunner {
     /// `engine` and logs them to `loggers`.
     #[inline]
     #[must_use]
-    pub fn new(loggers: Arc<RwLock<File>>, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
+    pub fn new(loggers: LogWriter, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
         Self { engine, loggers }
     }
 
@@ -113,21 +113,21 @@ impl PyActionRunner {
                     ctx.execution_id.clone(),
                     false,
                 ),
-                logger: Arc::clone(&self.loggers),
+                logger: self.loggers.clone(),
             };
 
             let workflow = bindings::Workflow {
                 log: bindings::WorkflowLogger {
                     name: format!("{name}.{operation_name}"),
                     output: output.into(),
-                    loggers: Arc::clone(&self.loggers),
+                    loggers: self.loggers.clone(),
                 },
             };
 
             let action = bindings::Action {
                 log: bindings::ActionLogger {
                     name: format!("{name}.{operation_name}"),
-                    logger: Arc::clone(&self.loggers),
+                    logger: self.loggers.clone(),
                 },
             };
 
@@ -139,7 +139,7 @@ impl PyActionRunner {
                     ctx.execution_id.clone(),
                     true,
                 ),
-                logger: Arc::clone(&self.loggers),
+                logger: self.loggers.clone(),
             };
 
             run_python(|| {

@@ -18,6 +18,7 @@ urlencoding = "2.1"
 execution_engine = { path = "../../usecases/execution_engine" }
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
+common_data_structures = { path = "../../common/data_structures" }
 
 thiserror = { workspace = true }
 
