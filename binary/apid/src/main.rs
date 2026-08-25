@@ -458,6 +458,13 @@ fn construct_execution_engine(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_err| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
@@ -523,11 +530,11 @@ async fn main() -> anyhow::Result<()> {
         &config,
     )?;
 
-    // Start Server
-    // println!("Starting server...");
-
     let engine = ApiDaemon::new(repos, paths, engine, response_store, signals);
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
+
+    tracing::info!(%addr, "starting server");
+
     Server::builder()
         .add_service(EngineServer::new(engine))
         .serve(addr)

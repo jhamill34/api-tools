@@ -173,6 +173,8 @@ dependencies = [
  "tokio",
  "toml 0.7.8",
  "tonic",
+ "tracing",
+ "tracing-subscriber",
  "user_input",
  "uuid",
 ]
