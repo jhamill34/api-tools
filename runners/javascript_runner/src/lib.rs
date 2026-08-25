@@ -18,7 +18,8 @@
     clippy::absolute_paths,
 )]
 
-//!
+//! A [`CodeRunner`] adapter that executes a JavaScript operation body inside
+//! a fresh [`MiniV8`] interpreter.
 
 // pub mod bindings;
 mod constants;
@@ -42,14 +43,17 @@ lazy_static! {
         Regex::new(r"function\s*(?P<name>\w+)\s*\(\s*\w*\s*\)\s*").ok();
 }
 
-///
+/// Rewrites a source body whose top-level function is an arrow function
+/// (matched by `re`) into a `(input, api) => { ... }` wrapper that calls it.
 fn handle_arrow_func(source: &str, re: &Regex) -> String {
     let source = re.replace(source, "const __internal_arrow = $line");
 
     format!("(input, api) => {{\n\n{source}\n\n; return __internal_arrow(input);\n\n}}\n\n")
 }
 
-///
+/// Rewrites a source body whose top-level function is a named `function`
+/// declaration into a `(input, api) => { ... }` wrapper that calls it by
+/// the name captured in `captures`.
 fn handle_regular_func(source: &str, captures: &Captures) -> error::Result<String> {
     if let Some(name) = captures.name("name") {
         let name = name.as_str();
@@ -63,7 +67,9 @@ fn handle_regular_func(source: &str, captures: &Captures) -> error::Result<Strin
     }
 }
 
-///
+/// Detects whether `source`'s top-level function is an arrow function or a
+/// named `function` declaration, and wraps it in a
+/// `(input, api) => { ... }` shim so it can be invoked uniformly.
 fn wrap_source_code(source: &str) -> error::Result<String> {
     if let Some(arrow_func) = ARROW_FUNC.as_ref() {
         if arrow_func.is_match(source) {
@@ -82,23 +88,29 @@ fn wrap_source_code(source: &str) -> error::Result<String> {
     ))
 }
 
-///
+/// A [`CodeRunner`] that wraps and executes a JavaScript operation body in
+/// a fresh `MiniV8` interpreter per call, exposing an `api.run(id, params)`
+/// binding the script can use to invoke another operation on the shared
+/// [`execution_engine::Engine`].
 pub struct JsActionRunner {
-    ///
+    /// Where the `api.run` binding logs each nested call it makes.
     logger: Arc<RwLock<File>>,
 
-    ///
+    /// The engine used to resolve `api.run` calls made from JavaScript.
     engine: Arc<RwLock<execution_engine::Engine>>,
 }
 
 impl JsActionRunner {
-    ///
+    /// Creates a [`JsActionRunner`] that dispatches nested calls through
+    /// `engine` and logs them to `logger`.
     #[inline]
     pub fn new(engine: Arc<RwLock<execution_engine::Engine>>, logger: Arc<RwLock<File>>) -> Self {
         Self { logger, engine }
     }
 
-    ///
+    /// Wraps `source_code` via [`wrap_source_code`], evaluates it in a new
+    /// `MiniV8` interpreter with `params` as input and an `api.run` binding
+    /// installed, and converts the JavaScript return value back to JSON.
     fn run_internal(
         &self,
         name: &str,

@@ -1,8 +1,10 @@
-//!
+//! Conversions between `serde_json::Value` and `MiniV8`'s JavaScript value
+//! representation.
 
 use mini_v8::MiniV8;
 
-///
+/// Converts a JSON value into a `MiniV8` value in the given interpreter,
+/// recursively converting array elements and object entries.
 pub fn from_value(mv8: &MiniV8, item: serde_json::Value) -> mini_v8::Result<mini_v8::Value> {
     let result = match item {
         serde_json::Value::Null => mini_v8::Value::Null,
@@ -38,7 +40,9 @@ pub fn from_value(mv8: &MiniV8, item: serde_json::Value) -> mini_v8::Result<mini
     Ok(result)
 }
 
-///
+/// Converts a `MiniV8` value back into a JSON value, recursively converting
+/// array elements and object entries. Functions and dates convert to an
+/// empty object, since neither has a JSON representation.
 pub fn from_v8(item: mini_v8::Value) -> mini_v8::Result<serde_json::Value> {
     let result = match item {
         mini_v8::Value::Undefined | mini_v8::Value::Null => serde_json::Value::Null,
