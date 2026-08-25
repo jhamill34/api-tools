@@ -130,3 +130,40 @@ async fn a_script_that_exceeds_its_memory_budget_is_aborted() {
         "expected the script exceeding its memory budget to be aborted"
     );
 }
+
+#[tokio::test]
+async fn a_step_registered_but_never_get_before_the_scripts_own_direct_call_still_progresses_eagerly(
+) {
+    let engine = WorkflowEngine::new().expect("build engine");
+    install_mock_db_lookup(
+        &engine,
+        Duration::from_millis(150),
+        Arc::new(AtomicUsize::new(0)),
+    );
+
+    // "A" is registered via api.step but not retrieved until after the
+    // script directly awaits its own "B" call. If A only starts once
+    // something explicitly waits on it (the old, purely lazy behavior),
+    // total time is ~300ms (B, then A, in series). If A starts eagerly -
+    // making real progress while the script is separately suspended
+    // awaiting B - total time is ~150ms (both concurrent).
+    let script = r#"
+        local step_a = api.step(function() return db_lookup("A") end)
+        local b = db_lookup("B")
+        local a = step_a:get()
+        return { a = a, b = b }
+    "#;
+
+    let start = Instant::now();
+    let result = engine.run(script).await.expect("workflow run");
+    let elapsed = start.elapsed();
+
+    assert_eq!(result["a"], serde_json::json!("A"));
+    assert_eq!(result["b"], serde_json::json!("B"));
+    assert!(
+        elapsed < Duration::from_millis(280),
+        "expected step A (registered eagerly, only retrieved after the script's own direct \
+         call to B) to have already progressed concurrently with B, took {elapsed:?} - eager \
+         scheduling isn't working, A only started once :get() was called"
+    );
+}
