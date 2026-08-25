@@ -34,9 +34,9 @@ use std::{
     collections::HashMap,
     env,
     fs::{self, File},
+    panic,
     path::PathBuf,
     sync::{mpsc::Sender, Mutex, PoisonError, RwLock},
-    thread,
 };
 
 use anyhow::{anyhow, Context};
@@ -262,56 +262,19 @@ impl Engine for ApiDaemon {
         let engine = Arc::clone(&self.engine);
         let responses = Arc::clone(&self.responses);
         let signals = Arc::clone(&self.signals);
+        let operation_id = req.id;
 
-        // TODO: convert to using a ThreadPool
-        thread::spawn(move || {
+        tokio::task::spawn_blocking(move || {
             let ctx = execution_engine::services::EngineInputContext::new(
                 None,
                 execution_id.to_string(),
                 false,
             );
-            let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
 
-            // TODO: Better error handling, Engine::run should NOT panic!
-            let result = engine.run(&req.id, input, options, &ctx);
-
-            let execution_id = execution_id.to_string();
-            match result {
-                Ok(result) => match serde_json::to_string_pretty(&result) {
-                    Ok(result) => {
-                        let result = GetRunResultResponse {
-                            status: get_run_result_response::Status::Completed.into(),
-                            output: Some(result),
-                        };
-
-                        let mut responses =
-                            responses.lock().unwrap_or_else(PoisonError::into_inner);
-                        responses.insert(execution_id.clone(), result);
-                    }
-                    Err(err) => {
-                        let result = GetRunResultResponse {
-                            status: get_run_result_response::Status::Completed.into(),
-                            output: Some(format!("{{ \"error\": \"{err}\" }}")),
-                        };
-
-                        let mut responses =
-                            responses.lock().unwrap_or_else(PoisonError::into_inner);
-                        responses.insert(execution_id.clone(), result);
-                    }
-                },
-                Err(err) => {
-                    let result = GetRunResultResponse {
-                        status: get_run_result_response::Status::Completed.into(),
-                        output: Some(format!("{{ \"error\": \"{err}\" }}")),
-                    };
-
-                    let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
-                    responses.insert(execution_id.clone(), result);
-                }
-            };
-
-            let mut signals = signals.lock().unwrap_or_else(PoisonError::into_inner);
-            signals.remove(&execution_id);
+            finish_run(&execution_id.to_string(), &responses, &signals, move || {
+                let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
+                engine.run(&operation_id, input, options, &ctx)
+            });
         });
 
         Ok(Response::new(response))
@@ -376,6 +339,57 @@ impl Engine for ApiDaemon {
         }
 
         Ok(Response::new(ProvideInputResponse {}))
+    }
+}
+
+/// Runs `task`, converts its result into a [`GetRunResultResponse`], and
+/// records it under `execution_id` in `responses` before always removing
+/// the matching `signals` entry — even when `task` panics, so a failing
+/// run never leaves its status stuck at `Running` forever.
+fn finish_run<F>(
+    execution_id: &str,
+    responses: &Mutex<HashMap<String, GetRunResultResponse>>,
+    signals: &Signals,
+    task: F,
+) where
+    F: FnOnce() -> execution_engine::error::Result<serde_json::Value> + panic::UnwindSafe,
+{
+    let outcome = panic::catch_unwind(task);
+
+    let output = match outcome {
+        Ok(Ok(result)) => serde_json::to_string_pretty(&result)
+            .unwrap_or_else(|err| serde_json::json!({ "error": err.to_string() }).to_string()),
+        Ok(Err(err)) => serde_json::json!({ "error": err.to_string() }).to_string(),
+        Err(panic) => {
+            let msg = panic_message(panic.as_ref());
+            serde_json::json!({ "error": format!("panic: {msg}") }).to_string()
+        }
+    };
+
+    let result = GetRunResultResponse {
+        status: get_run_result_response::Status::Completed.into(),
+        output: Some(output),
+    };
+
+    {
+        let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
+        responses.insert(execution_id.to_owned(), result);
+    }
+
+    let mut signals = signals.lock().unwrap_or_else(PoisonError::into_inner);
+    signals.remove(execution_id);
+}
+
+/// Extracts a human-readable message from a caught panic payload, falling
+/// back to a generic message for a panic value that isn't a `&str`/`String`
+/// (e.g. one raised via `std::panic::panic_any`).
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_owned()
     }
 }
 
@@ -521,4 +535,95 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_e| anyhow!("Panic occured in watcher handler"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    fn empty_state() -> (
+        Mutex<HashMap<String, GetRunResultResponse>>,
+        Signals,
+        String,
+    ) {
+        let responses = Mutex::new(HashMap::new());
+
+        let signals = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, _rx) = mpsc::channel::<serde_json::Value>();
+        signals
+            .lock()
+            .unwrap()
+            .insert("exec-1".to_owned(), (serde_json::Value::Null, tx));
+
+        (responses, signals, "exec-1".to_owned())
+    }
+
+    #[test]
+    fn finish_run_records_a_completed_response_on_success() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run(&execution_id, &responses, &signals, || {
+            Ok(serde_json::json!({ "hello": "world" }))
+        });
+
+        let responses = responses.lock().unwrap();
+        let result = responses.get(&execution_id).expect("response recorded");
+        assert_eq!(result.status(), get_run_result_response::Status::Completed);
+        assert!(result.output.as_ref().unwrap().contains("hello"));
+
+        assert!(
+            !signals.lock().unwrap().contains_key(&execution_id),
+            "expected the signal entry to be cleaned up"
+        );
+    }
+
+    #[test]
+    fn finish_run_records_an_error_response_when_the_task_returns_err() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run(&execution_id, &responses, &signals, || {
+            Err(execution_engine::error::ExecutionEngine::NotFound(
+                "widget".into(),
+            ))
+        });
+
+        let responses = responses.lock().unwrap();
+        let result = responses.get(&execution_id).expect("response recorded");
+        assert_eq!(result.status(), get_run_result_response::Status::Completed);
+        assert!(result.output.as_ref().unwrap().contains("widget"));
+
+        assert!(!signals.lock().unwrap().contains_key(&execution_id));
+    }
+
+    #[test]
+    fn finish_run_does_not_leave_the_response_stuck_at_running_when_the_task_panics() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run(
+            &execution_id,
+            &responses,
+            &signals,
+            || -> execution_engine::error::Result<serde_json::Value> {
+                panic!("boom");
+            },
+        );
+
+        let responses = responses.lock().unwrap();
+        let result = responses
+            .get(&execution_id)
+            .expect("a panicking run must still record a response, not leave it stuck at Running");
+        assert_eq!(
+            result.status(),
+            get_run_result_response::Status::Completed,
+            "a panicking run must be reported as Completed (with an error), not left Running forever"
+        );
+        assert!(result.output.as_ref().unwrap().contains("boom"));
+
+        assert!(
+            !signals.lock().unwrap().contains_key(&execution_id),
+            "expected the signal entry to be cleaned up even when the task panics"
+        );
+    }
 }
