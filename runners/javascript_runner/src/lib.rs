@@ -18,8 +18,8 @@
     clippy::absolute_paths,
 )]
 
-//! A [`CodeRunner`] adapter that executes a JavaScript operation body inside
-//! a fresh [`MiniV8`] interpreter.
+//! A [`CodeRunner`] adapter that executes a JavaScript operation body
+//! inside a [`MiniV8`] interpreter reused per thread.
 
 // pub mod bindings;
 mod constants;
@@ -30,7 +30,7 @@ extern crate alloc;
 use alloc::sync::Arc;
 use mini_v8::MiniV8;
 
-use std::sync::RwLock;
+use std::{cell::RefCell, sync::RwLock};
 
 use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;
@@ -42,6 +42,30 @@ lazy_static! {
     static ref ARROW_FUNC: Option<Regex> = Regex::new(r"(?P<line>\(\s*\w*\s*\)\s*=>\s*)").ok();
     static ref REGULAR_FUNC: Option<Regex> =
         Regex::new(r"function\s*(?P<name>\w+)\s*\(\s*\w*\s*\)\s*").ok();
+}
+
+thread_local! {
+    /// This thread's cached `MiniV8` instance, lazily created on first use.
+    static THREAD_MINI_V8: RefCell<Option<MiniV8>> = const { RefCell::new(None) };
+}
+
+/// Returns this thread's cached [`MiniV8`] instance, creating one on first
+/// use. Constructing a `MiniV8` builds a fresh V8 isolate, which costs
+/// low-single-digit milliseconds — reusing one per thread instead of per
+/// call avoids paying that cost on every JavaScript step. `MiniV8` isn't
+/// `Send` (it wraps `Rc`-based state internally), so instances can't be
+/// shared across threads; caching one per thread is the safe way to reuse
+/// them anyway, since `apid` dispatches each step onto a pool of reused
+/// worker threads via `tokio::task::spawn_blocking`.
+///
+/// Reusing the isolate means its global object persists across calls on
+/// the same thread — a script that assigns onto `globalThis` (rather than
+/// declaring a local with `var`/`let`/`const`, which every wrapped script
+/// body already does per [`wrap_source_code`]) would see that state on a
+/// later, unrelated call on the same thread. This mirrors the tradeoff
+/// already accepted for `python_runner`'s process-wide interpreter reuse.
+fn thread_mini_v8() -> MiniV8 {
+    THREAD_MINI_V8.with(|cell| cell.borrow_mut().get_or_insert_with(MiniV8::new).clone())
 }
 
 /// Rewrites a source body whose top-level function is an arrow function
@@ -90,9 +114,9 @@ fn wrap_source_code(source: &str) -> error::Result<String> {
 }
 
 /// A [`CodeRunner`] that wraps and executes a JavaScript operation body in
-/// a fresh `MiniV8` interpreter per call, exposing an `api.run(id, params)`
-/// binding the script can use to invoke another operation on the shared
-/// [`execution_engine::Engine`].
+/// this thread's cached `MiniV8` interpreter (see [`thread_mini_v8`]),
+/// exposing an `api.run(id, params)` binding the script can use to invoke
+/// another operation on the shared [`execution_engine::Engine`].
 pub struct JsActionRunner {
     /// Where the `api.run` binding logs each nested call it makes.
     logger: LogWriter,
@@ -109,9 +133,10 @@ impl JsActionRunner {
         Self { logger, engine }
     }
 
-    /// Wraps `source_code` via [`wrap_source_code`], evaluates it in a new
-    /// `MiniV8` interpreter with `params` as input and an `api.run` binding
-    /// installed, and converts the JavaScript return value back to JSON.
+    /// Wraps `source_code` via [`wrap_source_code`], evaluates it in this
+    /// thread's cached `MiniV8` interpreter with `params` as input and an
+    /// `api.run` binding installed, and converts the JavaScript return
+    /// value back to JSON.
     fn run_internal(
         &self,
         name: &str,
@@ -120,7 +145,7 @@ impl JsActionRunner {
         params: serde_json::Value,
         ctx: &execution_engine::services::EngineInputContext,
     ) -> error::Result<serde_json::Value> {
-        let mv8 = MiniV8::new();
+        let mv8 = thread_mini_v8();
 
         let logger = self.logger.clone();
         let engine = Arc::clone(&self.engine);
@@ -198,5 +223,24 @@ impl CodeRunner for JsActionRunner {
     ) -> execution_engine::error::Result<serde_json::Value> {
         let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thread_mini_v8;
+
+    #[test]
+    fn thread_mini_v8_reuses_the_same_isolate_across_calls() {
+        let first = thread_mini_v8();
+        first.eval::<_, ()>("globalThis.__probe = 42;").unwrap();
+
+        let second = thread_mini_v8();
+        let value: i32 = second.eval("globalThis.__probe").unwrap();
+
+        assert_eq!(
+            value, 42,
+            "expected the second call to see state set by the first, proving the isolate was reused"
+        );
     }
 }
