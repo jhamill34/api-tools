@@ -1,6 +1,7 @@
 #![allow(clippy::separated_literal_suffix)]
 
-//!
+//! Generates a sample JSON input/output payload for an operation, used by
+//! the `InputStub`/`OutputStub` CLI commands.
 
 use std::collections::{HashMap, HashSet};
 
@@ -8,7 +9,11 @@ use anyhow::{anyhow, bail};
 use common_data_structures::trie::Trie;
 use core_entities::service::VersionedServiceTree;
 
-///
+/// Builds a sample input payload for `operation`, driven by the service's
+/// manifest type: parameter/schema defaults for an `OpenAPI` (`Swagger`)
+/// operation's parameters and JSON request body, or per-parameter defaults
+/// for an `Action`/`ApiWrapped` manifest. Errors on `SimpleCode`/
+/// `ScriptedAction` manifests, which aren't yet supported.
 pub fn get_input(
     service: &VersionedServiceTree,
     operation: &str,
@@ -100,7 +105,13 @@ pub fn get_input(
     Ok(serde_json::Value::Object(input_example))
 }
 
-///
+/// Builds a sample output payload for `operation`, mirroring
+/// [`get_input`]'s per-manifest-type handling: the `OpenAPI` `200` response's
+/// JSON schema for a `Swagger` operation, per-parameter defaults for an
+/// `Action` manifest's outputs, or `"<UNKNOWN>"` placeholders for an
+/// `ApiWrapped` manifest's output selectors (their real type isn't known
+/// without evaluating their `JMESPath` expression). Errors on
+/// `SimpleCode`/`ScriptedAction` manifests, which aren't yet supported.
 pub fn get_output(
     service: &VersionedServiceTree,
     operation: &str,
@@ -187,7 +198,8 @@ pub fn get_output(
     }
 }
 
-///
+/// Produces a zero-value/placeholder JSON value matching `param`'s type.
+/// An unrecognized type produces `"<UNKNOWN>"` rather than panicking.
 pub fn parameter_to_value(
     param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
 ) -> serde_json::Value {
@@ -214,7 +226,11 @@ pub fn parameter_to_value(
     }
 }
 
-///
+/// Produces a sample value for `schema`: resolves a `$ref` against
+/// `types` (tracking `seen` references to print `$ref:{path}` instead of
+/// recursing forever on a cycle) or delegates to
+/// [`schema_object_to_value`] for an inline schema object. `path` tracks
+/// the current field path, for cycle-reference display.
 pub fn schema_to_value(
     schema: &Option<core_entities::service::schema::Value>,
     types: &HashMap<String, core_entities::service::Schema>,
@@ -247,7 +263,11 @@ pub fn schema_to_value(
     }
 }
 
-///
+/// Produces a zero-value sample matching `schema`'s type: a default
+/// scalar, an object built by recursing into (optionally
+/// `required`-filtered) properties, or a one-element array built by
+/// recursing into the item schema. An unrecognized/unset type produces
+/// `"<UNKNOWN>"` rather than panicking.
 pub fn schema_object_to_value(
     schema: &core_entities::service::SchemaObject,
     types: &HashMap<String, core_entities::service::Schema>,
