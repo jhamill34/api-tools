@@ -190,37 +190,19 @@ fn handle_path_items(
         let path_item = path_item
             .as_object_mut()
             .ok_or_else(|| error::ServiceWriter::InvalidType("Object".into()))?;
-        let path_item = match operation.method.enum_value() {
-            Ok(service::operation::HttpMethodType::GET) => path_item
-                .entry(String::from("get"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::POST) => path_item
-                .entry(String::from("post"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::PUT) => path_item
-                .entry(String::from("put"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::PATCH) => path_item
-                .entry(String::from("patch"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::DELETE) => path_item
-                .entry(String::from("delete"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::HEAD) => path_item
-                .entry(String::from("head"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::OPTIONS) => path_item
-                .entry(String::from("options"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
-            Ok(service::operation::HttpMethodType::TRACE) => path_item
-                .entry(String::from("trace"))
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new())),
+
+        let verb = match operation.method.enum_value() {
             Ok(service::operation::HttpMethodType::HTTP_METHOD_TYPE_NONE) | Err(_) => {
                 return Err(error::ServiceWriter::Unimplemented(
                     "Non Supported HTTP VERB".into(),
                 ))
             }
+            Ok(method) => method.descriptor().name().to_lowercase(),
         };
+
+        let path_item = path_item
+            .entry(verb)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
 
         let path_item = path_item
             .as_object_mut()
@@ -434,47 +416,38 @@ fn handle_schema(
             }
         }
         &Some(service::schema::Value::AllOf(ref values)) => {
-            let values: error::Result<Vec<serde_json::Value>> = values
-                .schema
-                .iter()
-                .map(|common_schema| {
-                    let mut schema = serde_json::Map::new();
-                    handle_schema(&mut schema, common_schema)?;
-                    Ok(serde_json::Value::Object(schema))
-                })
-                .collect();
-
-            sink.insert("allOf".into(), values?.into());
+            handle_composed_schema(sink, "allOf", values)?;
         }
         &Some(service::schema::Value::AnyOf(ref values)) => {
-            let values: error::Result<Vec<serde_json::Value>> = values
-                .schema
-                .iter()
-                .map(|common_schema| {
-                    let mut schema = serde_json::Map::new();
-                    handle_schema(&mut schema, common_schema)?;
-                    Ok(serde_json::Value::Object(schema))
-                })
-                .collect();
-
-            sink.insert("anyOf".into(), values?.into());
+            handle_composed_schema(sink, "anyOf", values)?;
         }
         &Some(service::schema::Value::OneOf(ref values)) => {
-            let values: error::Result<Vec<serde_json::Value>> = values
-                .schema
-                .iter()
-                .map(|common_schema| {
-                    let mut schema = serde_json::Map::new();
-                    handle_schema(&mut schema, common_schema)?;
-                    Ok(serde_json::Value::Object(schema))
-                })
-                .collect();
-
-            sink.insert("oneOf".into(), values?.into());
+            handle_composed_schema(sink, "oneOf", values)?;
         }
         _ => {}
     }
 
+    Ok(())
+}
+
+/// Writes a `allOf`/`anyOf`/`oneOf` composition's branches (recursively
+/// handled via [`handle_schema`]) into `sink` under `key`.
+fn handle_composed_schema(
+    sink: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    composed: &service::ComposedSchema,
+) -> error::Result<()> {
+    let values: error::Result<Vec<serde_json::Value>> = composed
+        .schema
+        .iter()
+        .map(|common_schema| {
+            let mut schema = serde_json::Map::new();
+            handle_schema(&mut schema, common_schema)?;
+            Ok(serde_json::Value::Object(schema))
+        })
+        .collect();
+
+    sink.insert(key.into(), values?.into());
     Ok(())
 }
 
@@ -499,5 +472,112 @@ mod tests {
             matches!(result, Err(error::ServiceWriter::Unimplemented(_))),
             "expected an unrecognized parameter location to error instead of writing a bogus \"in\" value, got {result:?}"
         );
+    }
+
+    #[test]
+    fn handle_path_items_groups_operations_by_path_and_lowercased_verb() {
+        let mut operations = HashMap::new();
+        operations.insert(
+            "getThing".to_owned(),
+            service::Operation {
+                path: "/thing".to_owned(),
+                method: service::operation::HttpMethodType::GET.into(),
+                ..Default::default()
+            },
+        );
+        operations.insert(
+            "createThing".to_owned(),
+            service::Operation {
+                path: "/thing".to_owned(),
+                method: service::operation::HttpMethodType::POST.into(),
+                ..Default::default()
+            },
+        );
+
+        let mut paths = serde_json::Map::new();
+        handle_path_items(&mut paths, &operations).unwrap();
+
+        let path_item = paths.get("/thing").unwrap().as_object().unwrap();
+        assert_eq!(
+            path_item.get("get").and_then(|op| op.get("operationId")),
+            Some(&serde_json::Value::from("getThing"))
+        );
+        assert_eq!(
+            path_item.get("post").and_then(|op| op.get("operationId")),
+            Some(&serde_json::Value::from("createThing"))
+        );
+    }
+
+    #[test]
+    fn handle_path_items_rejects_an_unset_http_method() {
+        let mut operations = HashMap::new();
+        operations.insert(
+            "mystery".to_owned(),
+            service::Operation {
+                path: "/thing".to_owned(),
+                ..Default::default()
+            },
+        );
+
+        let mut paths = serde_json::Map::new();
+        let result = handle_path_items(&mut paths, &operations);
+
+        assert!(
+            matches!(result, Err(error::ServiceWriter::Unimplemented(_))),
+            "expected an unset HTTP method to error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn handle_schema_writes_composed_schema_branches_under_the_matching_key() {
+        let ref_branch = |name: &str| service::Schema {
+            value: Some(service::schema::Value::Ref(name.to_owned())),
+            ..Default::default()
+        };
+
+        for (value, key) in [
+            (
+                service::schema::Value::AllOf(service::ComposedSchema {
+                    schema: vec![ref_branch("A"), ref_branch("B")],
+                    ..Default::default()
+                }),
+                "allOf",
+            ),
+            (
+                service::schema::Value::AnyOf(service::ComposedSchema {
+                    schema: vec![ref_branch("A"), ref_branch("B")],
+                    ..Default::default()
+                }),
+                "anyOf",
+            ),
+            (
+                service::schema::Value::OneOf(service::ComposedSchema {
+                    schema: vec![ref_branch("A"), ref_branch("B")],
+                    ..Default::default()
+                }),
+                "oneOf",
+            ),
+        ] {
+            let source = service::Schema {
+                value: Some(value),
+                ..Default::default()
+            };
+
+            let mut sink = serde_json::Map::new();
+            handle_schema(&mut sink, &source).unwrap();
+
+            let branches = sink
+                .get(key)
+                .unwrap_or_else(|| panic!("expected a \"{key}\" key in {sink:?}"))
+                .as_array()
+                .unwrap();
+            assert_eq!(
+                *branches,
+                vec![
+                    serde_json::json!({ "$ref": "A" }),
+                    serde_json::json!({ "$ref": "B" }),
+                ]
+            );
+        }
     }
 }
