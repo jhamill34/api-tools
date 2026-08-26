@@ -149,7 +149,7 @@ impl Task {
 
         let mut params = converters::from_py(self.params.as_ref(py))?;
 
-        if let &mut Value::Object(ref mut map) = &mut params {
+        if let Value::Object(map) = &mut params {
             map.insert("input_results".into(), result);
         } else {
             // TODO: Verify this functionality
