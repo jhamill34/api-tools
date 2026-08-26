@@ -1,11 +1,3 @@
-#![allow(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    reason = "pagination limit/offset casts between i32/usize/u64 are unaudited; \
-              tracked as a dedicated numeric-safety follow-up to issue #1, not \
-              rushed into this lint-hygiene pass"
-)]
-
 //! A [`DataConnectionRunner`] adapter that resolves an operation's request
 //! (method, endpoint, params, auth) and executes it over HTTP, handling
 //! pagination across multiple requests when configured.
@@ -48,6 +40,38 @@ where
     values
         .map(|(key, value)| Ok((key.to_string(), simplify_value(value)?)))
         .collect()
+}
+
+/// Resolves the `options.limit` pagination cap from JSON to an `i32`,
+/// falling back to [`constants::DEFAULT_LIMIT`] when absent, non-numeric, or
+/// out of `i32`'s range (rather than silently wrapping to an unrelated
+/// value).
+fn resolve_total_limit(options: &serde_json::Value) -> i32 {
+    options
+        .get("limit")
+        .and_then(|value| match value {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "float-to-int `as` casts saturate rather than wrap (defined \
+                          behavior since Rust 1.45): an out-of-range or NaN limit clamps \
+                          to i32::MAX/i32::MIN/0, and a fractional limit truncates toward \
+                          zero — both are the intended behavior for a pagination limit"
+            )]
+            serde_json::Value::Number(n) if n.is_f64() => n.as_f64().map(|n| n as i32),
+            serde_json::Value::Number(n) if n.is_i64() => {
+                n.as_i64().and_then(|n| i32::try_from(n).ok())
+            }
+            serde_json::Value::Number(n) if n.is_u64() => {
+                n.as_u64().and_then(|n| i32::try_from(n).ok())
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => None,
+        })
+        .unwrap_or(constants::DEFAULT_LIMIT)
 }
 
 /// Extracts the paginated results from a raw response, by resolving the
@@ -779,21 +803,7 @@ impl APICaller {
             .get(operation_name)
             .ok_or_else(|| error::APICaller::OperationNotFound(operation_name.into()))?;
 
-        let total_limit = options.get("limit");
-
-        let total_limit: i32 = total_limit
-            .and_then(|value| match value {
-                serde_json::Value::Number(n) if n.is_f64() => n.as_f64().map(|n| n as i32),
-                serde_json::Value::Number(n) if n.is_i64() => n.as_i64().map(|n| n as i32),
-                serde_json::Value::Number(n) if n.is_u64() => n.as_u64().map(|n| n as i32),
-                serde_json::Value::Null
-                | serde_json::Value::Bool(_)
-                | serde_json::Value::Number(_)
-                | serde_json::Value::String(_)
-                | serde_json::Value::Array(_)
-                | serde_json::Value::Object(_) => None,
-            })
-            .unwrap_or(constants::DEFAULT_LIMIT);
+        let total_limit: i32 = resolve_total_limit(options);
 
         let mut total: i32 = 0;
         let mut current_page: i32 = 0;
@@ -950,21 +960,7 @@ impl AsyncAPICaller {
             .get(operation_name)
             .ok_or_else(|| error::APICaller::OperationNotFound(operation_name.into()))?;
 
-        let total_limit = options.get("limit");
-
-        let total_limit: i32 = total_limit
-            .and_then(|value| match value {
-                serde_json::Value::Number(n) if n.is_f64() => n.as_f64().map(|n| n as i32),
-                serde_json::Value::Number(n) if n.is_i64() => n.as_i64().map(|n| n as i32),
-                serde_json::Value::Number(n) if n.is_u64() => n.as_u64().map(|n| n as i32),
-                serde_json::Value::Null
-                | serde_json::Value::Bool(_)
-                | serde_json::Value::Number(_)
-                | serde_json::Value::String(_)
-                | serde_json::Value::Array(_)
-                | serde_json::Value::Object(_) => None,
-            })
-            .unwrap_or(constants::DEFAULT_LIMIT);
+        let total_limit: i32 = resolve_total_limit(options);
 
         let mut total: i32 = 0;
         let mut current_page: i32 = 0;
@@ -1290,6 +1286,55 @@ mod tests {
         assert!(
             result.is_err(),
             "expected an unrecognized auth type to error instead of silently skipping auth, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_total_limit_passes_through_in_range_numbers() {
+        assert_eq!(resolve_total_limit(&serde_json::json!({ "limit": 42 })), 42);
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({ "limit": 42.9 })),
+            42
+        );
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({ "limit": 1_000_000_000_u64 })),
+            1_000_000_000
+        );
+    }
+
+    #[test]
+    fn resolve_total_limit_falls_back_to_default_when_absent_or_non_numeric() {
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({})),
+            constants::DEFAULT_LIMIT
+        );
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({ "limit": "not a number" })),
+            constants::DEFAULT_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_total_limit_falls_back_to_default_instead_of_wrapping_an_out_of_range_i64() {
+        // i64::from(i32::MAX) + 1 wraps to i32::MIN under `as i32`, which
+        // would corrupt the pagination limit into a large negative number
+        // instead of safely falling back to the default.
+        let oversized = i64::from(i32::MAX) + 1;
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({ "limit": oversized })),
+            constants::DEFAULT_LIMIT
+        );
+    }
+
+    #[test]
+    fn resolve_total_limit_falls_back_to_default_instead_of_wrapping_an_out_of_range_u64() {
+        // 2^32 + 1 wraps to 1 under `as i32`, which would be silently
+        // misread as a valid (tiny) limit instead of falling back to the
+        // configured default.
+        let oversized = u64::from(u32::MAX) + 2;
+        assert_eq!(
+            resolve_total_limit(&serde_json::json!({ "limit": oversized })),
+            constants::DEFAULT_LIMIT
         );
     }
 }
