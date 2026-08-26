@@ -180,7 +180,9 @@ impl WorkflowEngine {
         Ok(())
     }
 
-    /// Loads and runs `script` as the workflow's entry point, returning its
+    /// Loads and runs `script` as the workflow's entry point with `params`
+    /// bound as a local `input` argument (`local input = ...`, the same
+    /// chunk-argument convention `runners/lua_runner` uses), returning its
     /// JSON-converted return value.
     ///
     /// Drives the script's own coroutine and any `api.step`-registered
@@ -191,16 +193,22 @@ impl WorkflowEngine {
     ///
     /// # Errors
     /// Returns an error if the script fails to parse, errors at runtime,
-    /// hits its timeout/memory budget, or its return value can't be
-    /// converted to JSON.
-    pub async fn run(&self, script: &str) -> error::Result<serde_json::Value> {
+    /// hits its timeout/memory budget, or its return value (or `params`)
+    /// can't be converted between JSON and Lua.
+    pub async fn run(
+        &self,
+        script: &str,
+        params: serde_json::Value,
+    ) -> error::Result<serde_json::Value> {
         let lua = &self.lua;
         let timeout = self.timeout;
 
         let pending: PendingQueue = Arc::new(Mutex::new(Vec::new()));
         lua.set_app_data(pending.clone());
 
-        let func: Function = lua.load(script).into_function()?;
+        let input = lua.to_value(&params)?;
+        let wrapped = format!("local input = ...\n{script}");
+        let func: Function = lua.load(&wrapped).into_function()?;
         let thread = lua.create_thread(func)?;
         let start = Instant::now();
         thread.set_hook(
@@ -214,7 +222,7 @@ impl WorkflowEngine {
                 Ok(())
             },
         );
-        let mut main_fut = thread.into_async::<_, Value>(());
+        let mut main_fut = thread.into_async::<_, Value>(input);
 
         let mut background: FuturesUnordered<LocalBoxFuture<'_, ()>> = FuturesUnordered::new();
         let mut known = 0usize;

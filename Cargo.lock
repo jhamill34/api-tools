@@ -151,6 +151,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "api_caller",
+ "async-trait",
  "common_data_structures",
  "core_entities",
  "credential_entities",
@@ -179,6 +180,7 @@ dependencies = [
  "tracing-subscriber",
  "user_input",
  "uuid",
+ "workflow_engine",
 ]
 
 [[package]]

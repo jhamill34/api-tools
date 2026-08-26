@@ -39,7 +39,10 @@ async fn api_join_runs_independent_steps_concurrently() {
     "#;
 
     let start = Instant::now();
-    let result = engine.run(script).await.expect("workflow run");
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
     let elapsed = start.elapsed();
 
     assert_eq!(result["a"], serde_json::json!("A"));
@@ -63,7 +66,10 @@ async fn step_get_memoizes_and_only_runs_the_underlying_call_once() {
         return { first = first, second = second }
     "#;
 
-    let result = engine.run(script).await.expect("workflow run");
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
 
     assert_eq!(result["first"], serde_json::json!("A"));
     assert_eq!(result["second"], serde_json::json!("A"));
@@ -90,7 +96,10 @@ async fn sequential_get_calls_do_not_run_concurrently() {
     "#;
 
     let start = Instant::now();
-    engine.run(script).await.expect("workflow run");
+    engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
     let elapsed = start.elapsed();
 
     assert!(
@@ -105,7 +114,9 @@ async fn a_runaway_script_is_aborted_after_its_time_budget() {
     let engine =
         WorkflowEngine::with_limits(Duration::from_millis(50), None).expect("build engine");
 
-    let result = engine.run("while true do end").await;
+    let result = engine
+        .run("while true do end", serde_json::Value::Null)
+        .await;
 
     assert!(result.is_err(), "expected the runaway script to be aborted");
 }
@@ -123,7 +134,7 @@ async fn a_script_that_exceeds_its_memory_budget_is_aborted() {
         return "should not get here"
     "#;
 
-    let result = engine.run(script).await;
+    let result = engine.run(script, serde_json::Value::Null).await;
 
     assert!(
         result.is_err(),
@@ -155,7 +166,10 @@ async fn a_step_registered_but_never_get_before_the_scripts_own_direct_call_stil
     "#;
 
     let start = Instant::now();
-    let result = engine.run(script).await.expect("workflow run");
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
     let elapsed = start.elapsed();
 
     assert_eq!(result["a"], serde_json::json!("A"));
@@ -165,5 +179,24 @@ async fn a_step_registered_but_never_get_before_the_scripts_own_direct_call_stil
         "expected step A (registered eagerly, only retrieved after the script's own direct \
          call to B) to have already progressed concurrently with B, took {elapsed:?} - eager \
          scheduling isn't working, A only started once :get() was called"
+    );
+}
+
+#[tokio::test]
+async fn run_binds_params_as_a_local_input_argument() {
+    let engine = WorkflowEngine::new().expect("build engine");
+
+    let script = r#"
+        return { greeting = "hello " .. input.name, doubled = input.value * 2 }
+    "#;
+
+    let result = engine
+        .run(script, serde_json::json!({ "name": "world", "value": 21 }))
+        .await
+        .expect("workflow run");
+
+    assert_eq!(
+        result,
+        serde_json::json!({ "greeting": "hello world", "doubled": 42 })
     );
 }
