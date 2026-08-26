@@ -29,11 +29,11 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 /// unambiguous scalar representation.
 fn simplify_value(value: &serde_json::Value) -> error::Result<String> {
     match value {
-        &serde_json::Value::String(ref val) => Ok(val.to_string()),
-        &serde_json::Value::Bool(val) => Ok(val.to_string()),
-        &serde_json::Value::Number(ref val) => Ok(val.to_string()),
-        &serde_json::Value::Null => Ok("null".to_owned()),
-        &serde_json::Value::Array(_) | &serde_json::Value::Object(_) => {
+        serde_json::Value::String(val) => Ok(val.to_string()),
+        serde_json::Value::Bool(val) => Ok(val.to_string()),
+        serde_json::Value::Number(val) => Ok(val.to_string()),
+        serde_json::Value::Null => Ok("null".to_owned()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             Err(error::APICaller::SimpleValueAssertion)
         }
     }
@@ -60,9 +60,9 @@ fn find_results<'item>(
     result: &'item serde_json::Value,
     pagination_config: &Option<pagination::Value>,
 ) -> error::Result<&'item serde_json::Value> {
-    let result = if let &Some(ref pagination) = pagination_config {
+    let result = if let Some(pagination) = pagination_config {
         match pagination {
-            &core_entities::service::pagination::Value::PageOffset(ref page_offset) => {
+            core_entities::service::pagination::Value::PageOffset(page_offset) => {
                 let path = page_offset.resultsPath.jmesPath();
                 let path = path
                     .strip_prefix(constants::RESPONSE_BODY_PREFIX)
@@ -81,7 +81,7 @@ fn find_results<'item>(
                     path.resolve(result)?
                 }
             }
-            &core_entities::service::pagination::Value::MultiCursor(ref cursor) => {
+            core_entities::service::pagination::Value::MultiCursor(cursor) => {
                 let path = cursor.resultsPath.jmesPath();
                 let path = path
                     .strip_prefix(constants::RESPONSE_BODY_PREFIX)
@@ -100,7 +100,7 @@ fn find_results<'item>(
                     path.resolve(result)?
                 }
             }
-            &core_entities::service::pagination::Value::Offset(ref offset) => {
+            core_entities::service::pagination::Value::Offset(offset) => {
                 let path = offset.resultsPath.jmesPath();
                 let path = path
                     .strip_prefix(constants::RESPONSE_BODY_PREFIX)
@@ -119,7 +119,7 @@ fn find_results<'item>(
                     path.resolve(result)?
                 }
             }
-            &core_entities::service::pagination::Value::Unpaginated(ref unpaginated) => {
+            core_entities::service::pagination::Value::Unpaginated(unpaginated) => {
                 let path = unpaginated.resultsPath.jmesPath();
                 let path = path
                     .strip_prefix(constants::RESPONSE_BODY_PREFIX)
@@ -138,7 +138,7 @@ fn find_results<'item>(
                     path.resolve(result)?
                 }
             }
-            &core_entities::service::pagination::Value::NextUrl(_) | &_ => result,
+            core_entities::service::pagination::Value::NextUrl(_) | _ => result,
         }
     } else {
         result
@@ -216,7 +216,7 @@ impl APICallState {
 
         builder = builder.headers(headers);
 
-        if let &Some(ref body) = &self.body {
+        if let Some(body) = &self.body {
             log.write_all(format!("\n{}\n", serde_json::to_string_pretty(body)?).as_bytes())?;
             builder = builder.json(body);
         } else {
@@ -295,7 +295,7 @@ impl APICallState {
 
         builder = builder.headers(headers);
 
-        if let &Some(ref body) = &self.body {
+        if let Some(body) = &self.body {
             log.write_all(format!("\n{}\n", serde_json::to_string_pretty(body)?).as_bytes())?;
             builder = builder.json(body);
         } else {
@@ -591,9 +591,9 @@ impl APICallState {
         current_page: i32,
         parameters: &[Parameter],
     ) -> error::Result<i32> {
-        let requested = if let &Some(ref pagination) = pagination_config {
+        let requested = if let Some(pagination) = pagination_config {
             match pagination {
-                &core_entities::service::pagination::Value::PageOffset(ref page_offset) => {
+                core_entities::service::pagination::Value::PageOffset(page_offset) => {
                     let current_page = page_offset
                         .startPage
                         .value
@@ -614,7 +614,7 @@ impl APICallState {
 
                     max_limit
                 }
-                &core_entities::service::pagination::Value::MultiCursor(ref cursor) => {
+                core_entities::service::pagination::Value::MultiCursor(cursor) => {
                     let max_limit = cursor.maxLimit.value;
                     self.apply_runtime_expression(
                         &cursor.limitParam,
@@ -649,7 +649,7 @@ impl APICallState {
 
                     max_limit
                 }
-                &core_entities::service::pagination::Value::Offset(ref offset) => {
+                core_entities::service::pagination::Value::Offset(offset) => {
                     let max_limit = offset.maxLimit.value;
 
                     self.apply_runtime_expression(
@@ -665,7 +665,7 @@ impl APICallState {
 
                     max_limit
                 }
-                &pagination::Value::NextUrl(_) | &pagination::Value::Unpaginated(_) | &_ => 0_i32,
+                pagination::Value::NextUrl(_) | pagination::Value::Unpaginated(_) | _ => 0_i32,
             }
         } else {
             0_i32
@@ -783,15 +783,15 @@ impl APICaller {
 
         let total_limit: i32 = total_limit
             .and_then(|value| match value {
-                &serde_json::Value::Number(ref n) if n.is_f64() => n.as_f64().map(|n| n as i32),
-                &serde_json::Value::Number(ref n) if n.is_i64() => n.as_i64().map(|n| n as i32),
-                &serde_json::Value::Number(ref n) if n.is_u64() => n.as_u64().map(|n| n as i32),
-                &serde_json::Value::Null
-                | &serde_json::Value::Bool(_)
-                | &serde_json::Value::Number(_)
-                | &serde_json::Value::String(_)
-                | &serde_json::Value::Array(_)
-                | &serde_json::Value::Object(_) => None,
+                serde_json::Value::Number(n) if n.is_f64() => n.as_f64().map(|n| n as i32),
+                serde_json::Value::Number(n) if n.is_i64() => n.as_i64().map(|n| n as i32),
+                serde_json::Value::Number(n) if n.is_u64() => n.as_u64().map(|n| n as i32),
+                serde_json::Value::Null
+                | serde_json::Value::Bool(_)
+                | serde_json::Value::Number(_)
+                | serde_json::Value::String(_)
+                | serde_json::Value::Array(_)
+                | serde_json::Value::Object(_) => None,
             })
             .unwrap_or(constants::DEFAULT_LIMIT);
 
@@ -833,7 +833,7 @@ impl APICaller {
             let actual_result = find_results(&result, &operation.pagination.value)?;
 
             // Determine how many items we got in a request
-            let current_size = if let &serde_json::Value::Array(ref arr) = actual_result {
+            let current_size = if let serde_json::Value::Array(arr) = actual_result {
                 i32::try_from(arr.len())?
             } else {
                 1_i32
@@ -954,15 +954,15 @@ impl AsyncAPICaller {
 
         let total_limit: i32 = total_limit
             .and_then(|value| match value {
-                &serde_json::Value::Number(ref n) if n.is_f64() => n.as_f64().map(|n| n as i32),
-                &serde_json::Value::Number(ref n) if n.is_i64() => n.as_i64().map(|n| n as i32),
-                &serde_json::Value::Number(ref n) if n.is_u64() => n.as_u64().map(|n| n as i32),
-                &serde_json::Value::Null
-                | &serde_json::Value::Bool(_)
-                | &serde_json::Value::Number(_)
-                | &serde_json::Value::String(_)
-                | &serde_json::Value::Array(_)
-                | &serde_json::Value::Object(_) => None,
+                serde_json::Value::Number(n) if n.is_f64() => n.as_f64().map(|n| n as i32),
+                serde_json::Value::Number(n) if n.is_i64() => n.as_i64().map(|n| n as i32),
+                serde_json::Value::Number(n) if n.is_u64() => n.as_u64().map(|n| n as i32),
+                serde_json::Value::Null
+                | serde_json::Value::Bool(_)
+                | serde_json::Value::Number(_)
+                | serde_json::Value::String(_)
+                | serde_json::Value::Array(_)
+                | serde_json::Value::Object(_) => None,
             })
             .unwrap_or(constants::DEFAULT_LIMIT);
 
@@ -1006,7 +1006,7 @@ impl AsyncAPICaller {
             let actual_result = find_results(&result, &operation.pagination.value)?;
 
             // Determine how many items we got in a request
-            let current_size = if let &serde_json::Value::Array(ref arr) = actual_result {
+            let current_size = if let serde_json::Value::Array(arr) = actual_result {
                 i32::try_from(arr.len())?
             } else {
                 1_i32

@@ -61,7 +61,7 @@ impl APIWrapper {
 
         let mut input = serde_json::Value::Object(serde_json::Map::new());
         for input_param in &manifest.inputs {
-            if let &Some(ref param) = &input_param.param.0 {
+            if let Some(param) = &input_param.param.0 {
                 let param = &param.name;
                 if let Some(param) = params.get(param) {
                     let path: Vec<_> = input_param.apiParamName.split('.').collect();
@@ -141,7 +141,7 @@ fn traverse_map(
     value: serde_json::Value,
 ) -> error::Result<()> {
     if let Some(next) = parts.first() {
-        if let &mut serde_json::Value::Object(ref mut current) = current {
+        if let serde_json::Value::Object(current) = current {
             let key = (*next).to_owned();
             let child = current
                 .entry(key)
