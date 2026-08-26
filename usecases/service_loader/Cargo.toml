@@ -21,3 +21,6 @@ core_entities = { path = "../../entities/core" }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+
+[lints]
+workspace = true

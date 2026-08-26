@@ -1,5 +1,3 @@
-#![allow(clippy::std_instead_of_core, clippy::absolute_paths)]
-
 //! Errors produced while resolving and running an operation identifier.
 
 use std::io;

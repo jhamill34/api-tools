@@ -10,3 +10,6 @@ service_loader = { path = "../../usecases/service_loader" }
 service_writer = { path = "../../usecases/service_writer" }
 
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,5 +1,3 @@
-#![allow(clippy::std_instead_of_core)]
-
 //! Errors produced by an [`OperationRepos`](crate::OperationRepos)
 //! repository.
 

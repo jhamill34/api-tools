@@ -1,5 +1,3 @@
-#![allow(clippy::needless_borrowed_reference)]
-
 //! A hand-rolled lexer/parser for the `Generate` command's small input/
 //! output-mapping DSL:
 //!
@@ -482,7 +480,10 @@ impl FromStr for InputDescription {
 
 #[cfg(test)]
 mod test {
-    #![allow(clippy::panic_in_result_fn)]
+    #![allow(
+        clippy::panic_in_result_fn,
+        reason = "test code — unwrap/expect panics are expected on failure"
+    )]
 
     use super::*;
 

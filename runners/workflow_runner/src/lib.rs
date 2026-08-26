@@ -1,20 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::match_ref_pats,
-    clippy::separated_literal_suffix,
-    clippy::question_mark_used,
-    clippy::single_call_fn,
-    clippy::absolute_paths,
-    clippy::ref_patterns,
-    clippy::min_ident_chars
-)]
-
 //! Adapts `prototypes/workflow_engine::WorkflowEngine` to
 //! `execution_engine`'s async `WorkflowRunner` output port - the concrete
 //! wiring that connects the standalone prototype crate to the daemon's

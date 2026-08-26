@@ -22,3 +22,6 @@ common_data_structures = { path = "../../common/data_structures" }
 tempfile = "3"
 credential_entities = { path = "../../entities/credentials" }
 protobuf = { workspace = true }
+
+[lints]
+workspace = true

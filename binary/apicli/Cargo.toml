@@ -39,3 +39,6 @@ tonic-build = { workspace = true }
 dhat-heap = []
 dhat-ad-hoc = []
 
+
+[lints]
+workspace = true

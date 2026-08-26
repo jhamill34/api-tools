@@ -1,22 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-    clippy::shadow_unrelated,
-    clippy::shadow_same,
-    clippy::question_mark_used,
-    // clippy::too_many_lines
-    clippy::absolute_paths,
-    clippy::single_call_fn,
-    clippy::ref_patterns,
-
-    clippy::min_ident_chars,
-)]
-
 //! The CLI binary: a thin gRPC client to `apid`, plus local scaffolding
 //! tools for generating new service definitions and an embedded
 //! interactive-login web server.

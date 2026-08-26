@@ -1,5 +1,3 @@
-#![allow(clippy::std_instead_of_core)]
-
 //! Errors produced while making an API call.
 
 use std::{io, num::TryFromIntError};

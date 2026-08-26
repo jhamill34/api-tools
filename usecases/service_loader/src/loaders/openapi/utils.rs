@@ -170,7 +170,6 @@ impl FromStr for Reference {
 
 #[cfg(test)]
 mod test {
-    #![allow(clippy::restriction, clippy::pedantic)]
     use super::*;
 
     #[test]

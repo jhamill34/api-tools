@@ -91,12 +91,12 @@ pub async fn route(
         oauth_config.accessTokenPath.clone()
     };
 
-    let expression = jmespath::compile(&access_token_path).map_err(|_| {
-        error::CallbackResponse::InternalError("Invalid access token path".to_string())
+    let expression = jmespath::compile(&access_token_path).map_err(|err| {
+        error::CallbackResponse::InternalError(format!("Invalid access token path: {err}"))
     })?;
 
-    let access_token = expression.search(response_body).map_err(|_| {
-        error::CallbackResponse::InternalError("Unable to find access token".to_string())
+    let access_token = expression.search(response_body).map_err(|err| {
+        error::CallbackResponse::InternalError(format!("Unable to find access token: {err}"))
     })?;
 
     {

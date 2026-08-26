@@ -1,15 +1,12 @@
 //! The background thread that (re)loads changed services into the shared
 //! repositories, signalled by [`super::watcher`].
 
-extern crate alloc;
-use alloc::sync::Arc;
-
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
         mpsc::{Receiver, Sender},
-        Mutex, PoisonError,
+        Arc, Mutex, PoisonError,
     },
     thread::{self, JoinHandle},
 };

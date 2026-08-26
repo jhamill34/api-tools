@@ -1,9 +1,8 @@
 //! The [`Repository`] storage port and its in-memory implementation.
 
-use super::error;
+use std::collections::BTreeMap;
 
-extern crate alloc;
-use alloc::collections::BTreeMap;
+use super::error;
 
 /// A keyed store of values of type `V`.
 pub trait Repository<V> {
@@ -52,10 +51,7 @@ impl<V> Default for InMemoryRepository<V> {
 impl<V: Clone> Repository<V> for InMemoryRepository<V> {
     #[inline]
     fn list(&self) -> Vec<String> {
-        self.storage
-            .keys()
-            .map(alloc::borrow::ToOwned::to_owned)
-            .collect()
+        self.storage.keys().cloned().collect()
     }
 
     #[inline]

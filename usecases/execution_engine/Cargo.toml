@@ -22,3 +22,6 @@ anyhow = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt"] }
 
+
+[lints]
+workspace = true

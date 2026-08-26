@@ -538,8 +538,6 @@ fn handle_schema<R: io::Read>(
 
 #[cfg(test)]
 mod test {
-    #![allow(clippy::restriction, clippy::pedantic)]
-
     use core::cell::RefCell;
 
     use super::*;

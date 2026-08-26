@@ -1,22 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::question_mark_used,
-    clippy::needless_borrowed_reference,
-    clippy::absolute_paths,
-    clippy::ref_patterns,
-    clippy::single_call_fn
-)]
-
 //! An in-memory storage adapter that backs both [`service_loader`]'s
 //! [`LoaderOutput`] (persisting loaded services/credentials) and
 //! [`execution_engine`]'s [`EngineLookup`] (resolving them again at

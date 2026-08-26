@@ -4,13 +4,10 @@
 mod loader;
 mod watcher;
 
-extern crate alloc;
-use alloc::sync::Arc;
-
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Arc, Mutex},
     thread::JoinHandle,
 };
 

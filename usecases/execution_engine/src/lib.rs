@@ -1,20 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::needless_borrowed_reference,
-    clippy::question_mark_used,
-    clippy::ref_patterns
-)]
-
 //! The core orchestrator: [`Engine`] resolves a `service.operation`
 //! identifier against a loaded manifest and dispatches it to the
 //! registered [`services`] output port for that manifest's type.
@@ -25,16 +8,13 @@ pub mod services;
 /// Shared constants for the engine.
 mod constants;
 
-extern crate alloc;
-use alloc::sync::Arc;
-
 use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
 use services::{
     AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
     EngineInputContext, EngineLookup, FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::offset::Local;
 use core_entities::service::{code_resource::Language, service_manifest_latest};
@@ -489,7 +469,10 @@ impl Engine {
     /// Returns an error if the identifier can't be parsed, the service
     /// isn't found, the manifest isn't a `Swagger` manifest, or no
     /// [`AsyncDataConnectionRunner`] is registered.
-    #[allow(clippy::type_complexity)]
+    #[allow(
+        clippy::type_complexity,
+        reason = "return type mirrors the resolved connector's own nested Result/Option shape"
+    )]
     pub fn resolve_data_connector(
         &self,
         identifier: &str,
@@ -544,7 +527,11 @@ impl Engine {
     /// # Errors
     /// Returns an error if no `CodeRunner` is registered for `lang_key`, or
     /// if the registered runner's own call fails.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is a distinct dispatch input; see the doc comment above for why \
+                  this isn't yet unified with the sibling dispatch fn (#16)"
+    )]
     fn dispatch_code_runner(
         &self,
         identifier: &str,
