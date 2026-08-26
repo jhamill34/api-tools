@@ -25,6 +25,7 @@ members = [
 	"runners/lua_runner",
 	"runners/user_input",
 	"runners/filtered_runner",
+	"runners/workflow_runner",
 
 	# Implementations of service_loader output ports
 	"storage/in_memory_storage",

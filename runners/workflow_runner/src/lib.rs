@@ -1,7 +1,26 @@
+#![warn(clippy::restriction, clippy::pedantic)]
+#![allow(
+    clippy::blanket_clippy_restriction_lints,
+    clippy::mod_module_files,
+    clippy::self_named_module_files,
+    clippy::implicit_return,
+    clippy::shadow_reuse,
+    clippy::shadow_unrelated,
+    clippy::match_ref_pats,
+    clippy::separated_literal_suffix,
+    clippy::question_mark_used,
+    clippy::single_call_fn,
+    clippy::absolute_paths,
+    clippy::ref_patterns,
+    clippy::min_ident_chars
+)]
+
 //! Adapts `prototypes/workflow_engine::WorkflowEngine` to
 //! `execution_engine`'s async `WorkflowRunner` output port - the concrete
 //! wiring that connects the standalone prototype crate to the daemon's
-//! real dispatch path (`Engine::run_workflow`).
+//! real dispatch path (`Engine::run_workflow`). A [`CodeRunner`](execution_engine::services::CodeRunner)-style
+//! adapter crate like every other `runners/*` crate, just for the
+//! `Workflow` manifest kind instead.
 //!
 //! `mlua::Lua` is `!Sync` unconditionally (its `hook_callback` field is
 //! `Option<Arc<dyn Fn(&Lua, Debug) -> mlua::Result<()> + Send>>` - no
@@ -254,5 +273,185 @@ impl WorkflowRunner for WorkflowAdapter {
         rx.await.map_err(|_recv_err| ExecutionEngine::Other {
             source: anyhow::anyhow!("the workflow-dispatch thread dropped the response channel"),
         })?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use execution_engine::services::{CodeRunner, EngineLookup};
+
+    use super::*;
+
+    struct EmptyLookup;
+
+    impl EngineLookup for EmptyLookup {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            None
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    fn empty_engine() -> Arc<RwLock<execution_engine::Engine>> {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(EmptyLookup));
+        Arc::new(RwLock::new(execution_engine::Engine::new(lookup, logger)))
+    }
+
+    #[tokio::test]
+    async fn workflow_adapter_runs_lua_source_from_the_manifest() {
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString("return input.x + 1".to_owned());
+
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let adapter = WorkflowAdapter::spawn(empty_engine(), logger);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                serde_json::json!({ "x": 41 }),
+                &ctx,
+            )
+            .await
+            .expect("workflow run should succeed");
+
+        assert_eq!(result, serde_json::json!(42));
+    }
+
+    #[tokio::test]
+    async fn workflow_adapter_rejects_a_resource_path_manifest() {
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_resourcePath("workflow.lua".to_owned());
+
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let adapter = WorkflowAdapter::spawn(empty_engine(), logger);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .await;
+
+        assert!(
+            matches!(result, Err(ExecutionEngine::Unimplemented(_))),
+            "expected Unimplemented, got {result:?}"
+        );
+    }
+
+    struct FakeCodeRunner {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl CodeRunner for FakeCodeRunner {
+        fn run(
+            &self,
+            name: &str,
+            operation_name: &str,
+            _source_code: &str,
+            params: serde_json::Value,
+            _ctx: &EngineInputContext,
+        ) -> execution_engine::error::Result<serde_json::Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((name.to_owned(), operation_name.to_owned()));
+            Ok(params)
+        }
+    }
+
+    struct SingleServiceLookup(core_entities::service::VersionedServiceTree);
+
+    impl EngineLookup for SingleServiceLookup {
+        fn get_service(&self, id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            (id == "other").then(|| self.0.clone())
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    /// A `VersionedServiceTree` wrapping a single `SimpleCode` (Lua)
+    /// manifest - what `api.run` inside a workflow script needs to find
+    /// via `Engine::run` for a nested call to actually dispatch anywhere.
+    fn lua_simple_code_service() -> core_entities::service::VersionedServiceTree {
+        let mut code = core_entities::service::CodeResource::new();
+        code.set_codeString("ignored - FakeCodeRunner doesn't execute it".to_owned());
+        code.language =
+            protobuf::EnumOrUnknown::new(core_entities::service::code_resource::Language::LUA);
+
+        let mut simple_code = core_entities::service::SimpleCodeService::new();
+        simple_code.code = protobuf::MessageField::some(code);
+
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().set_simpleCode(simple_code);
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree
+    }
+
+    #[tokio::test]
+    async fn workflow_adapter_api_run_bridges_into_the_existing_sync_engine() {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(SingleServiceLookup(lua_simple_code_service())));
+        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
+            lookup,
+            logger.clone(),
+        )));
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        {
+            let mut engine = engine.write().unwrap();
+            engine.register_language(
+                "lua",
+                Box::new(FakeCodeRunner {
+                    calls: Arc::clone(&calls),
+                }),
+            );
+        }
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString("return api.run('other.op', { hello = 'world' })".to_owned());
+
+        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .await
+            .expect("workflow run should succeed");
+
+        assert_eq!(
+            result,
+            serde_json::json!([{ "hello": "world" }]),
+            "expected Engine::run's usual single-element array wrapping to apply here too, \
+             proving api.run really went through Engine::run rather than a shortcut"
+        );
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            [("other".to_owned(), "op".to_owned())],
+            "expected api.run to reach the fake code runner via the real Engine, with the \
+             workflow's own service name ('svc') resolving `this.xxx` - not used here since \
+             the call already names 'other' explicitly, but proves the bridge is genuinely \
+             wired to Engine::run rather than stubbed"
+        );
     }
 }
