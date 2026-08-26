@@ -478,54 +478,21 @@ fn handle_schema<R: io::Read>(
             _ => {}
         }
     } else {
-        let result = optional_field::<Vec<serde_json::Value>>(source, "oneOf")?;
-        if let Some(result) = result {
-            let schema: error::Result<Vec<service::Schema>> = result
-                .iter()
-                .map(|value| {
-                    let mut common_schema = service::Schema::new();
-                    handle_schema(value, &mut common_schema, root, fetcher, cache, schemas)?;
-                    Ok(common_schema)
-                })
-                .collect();
-            let schema = schema?;
-
+        if let Some(schema) = resolve_schema_list(source, "oneOf", root, fetcher, cache, schemas)? {
             sink.set_oneOf(service::ComposedSchema {
                 schema,
                 ..Default::default()
             });
         }
 
-        let result = optional_field::<Vec<serde_json::Value>>(source, "anyOf")?;
-        if let Some(result) = result {
-            let schema: error::Result<Vec<service::Schema>> = result
-                .iter()
-                .map(|value| {
-                    let mut common_schema = service::Schema::new();
-                    handle_schema(value, &mut common_schema, root, fetcher, cache, schemas)?;
-                    Ok(common_schema)
-                })
-                .collect();
-            let schema = schema?;
-
+        if let Some(schema) = resolve_schema_list(source, "anyOf", root, fetcher, cache, schemas)? {
             sink.set_anyOf(service::ComposedSchema {
                 schema,
                 ..Default::default()
             });
         }
 
-        let result = optional_field::<Vec<serde_json::Value>>(source, "allOf")?;
-        if let Some(result) = result {
-            let schema: error::Result<Vec<service::Schema>> = result
-                .iter()
-                .map(|value| {
-                    let mut common_schema = service::Schema::new();
-                    handle_schema(value, &mut common_schema, root, fetcher, cache, schemas)?;
-                    Ok(common_schema)
-                })
-                .collect();
-            let schema = schema?;
-
+        if let Some(schema) = resolve_schema_list(source, "allOf", root, fetcher, cache, schemas)? {
             sink.set_allOf(service::ComposedSchema {
                 schema,
                 ..Default::default()
@@ -534,6 +501,33 @@ fn handle_schema<R: io::Read>(
     }
 
     Ok(())
+}
+
+/// Resolves `source`'s `field` (`"oneOf"`/`"anyOf"`/`"allOf"`) as a list of
+/// schemas, recursively converting each branch via [`handle_schema`].
+/// Returns `None` if `field` is absent - the shared body of
+/// [`handle_schema`]'s three composition-field arms.
+fn resolve_schema_list<R: io::Read>(
+    source: &serde_json::Value,
+    field: &str,
+    root: &serde_json::Value,
+    fetcher: &dyn Fetcher<R>,
+    cache: &mut HashMap<String, serde_json::Value>,
+    schemas: &mut HashMap<String, service::Schema>,
+) -> error::Result<Option<Vec<service::Schema>>> {
+    let Some(values) = optional_field::<Vec<serde_json::Value>>(source, field)? else {
+        return Ok(None);
+    };
+
+    values
+        .iter()
+        .map(|value| {
+            let mut common_schema = service::Schema::new();
+            handle_schema(value, &mut common_schema, root, fetcher, cache, schemas)?;
+            Ok(common_schema)
+        })
+        .collect::<error::Result<Vec<_>>>()
+        .map(Some)
 }
 
 #[cfg(test)]
