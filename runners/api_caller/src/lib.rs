@@ -1164,15 +1164,22 @@ mod tests {
         let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
         let caller = APICaller::new(log);
 
+        // The response body must be fully drained before the connection is
+        // returned to reqwest's pool — leaving it unread races the second
+        // request against that release and flakes the assertion below.
         caller
             .client
             .get(format!("{base_url}/ping"))
             .send()
+            .unwrap()
+            .bytes()
             .unwrap();
         caller
             .client
             .get(format!("{base_url}/ping"))
             .send()
+            .unwrap()
+            .bytes()
             .unwrap();
 
         assert_eq!(
@@ -1188,16 +1195,24 @@ mod tests {
         let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
         let caller = AsyncAPICaller::new(log);
 
+        // See the sync test above: draining the body is what guarantees the
+        // connection is idle-pooled before the next request is sent.
         caller
             .client
             .get(format!("{base_url}/ping"))
             .send()
+            .await
+            .unwrap()
+            .bytes()
             .await
             .unwrap();
         caller
             .client
             .get(format!("{base_url}/ping"))
             .send()
+            .await
+            .unwrap()
+            .bytes()
             .await
             .unwrap();
 
