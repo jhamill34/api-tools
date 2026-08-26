@@ -41,6 +41,7 @@ members = [
 
 [workspace.dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 base64 = "0.21.0"
 chrono = "0.4.24"
 dhat = "0.3.2"

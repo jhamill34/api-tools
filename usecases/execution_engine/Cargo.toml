@@ -9,6 +9,7 @@ edition = "2021"
 protobuf = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+async-trait = { workspace = true }
 
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
@@ -19,4 +20,5 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt"] }
 

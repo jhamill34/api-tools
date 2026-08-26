@@ -333,6 +333,7 @@ message ServiceManifestLatest {
     APIWrappedService apiWrapped = 8;
     SimpleCodeService simpleCode = 9;
     ScriptedAction scriptedAction = 10;
+    WorkflowService workflow = 11;
   }
 
   string description = 4;
@@ -526,6 +527,22 @@ message SimpleCodeService {
   repeated OperationParameter inputs = 1;
   repeated McOperationParameter outputs = 2;
   CodeResource code = 3;
+}
+
+// A coroutine-based, async-native Lua workflow (see prototypes/workflow_engine
+// and issue #68/#74) - deliberately Lua-only (no `language` selector, unlike
+// CodeResource) and deliberately has no InputPrompter/`$input`-style field:
+// a workflow is meant to be a deterministic, latency-bounded function of its
+// inputs, never blocked on a human (see issue #29). `timeoutSeconds` and
+// `memoryLimitBytes` are enforced per run by the workflow engine itself, not
+// by the daemon around it.
+message WorkflowService {
+  oneof source {
+    string codeString = 1;
+    string resourcePath = 2;
+  }
+  uint32 timeoutSeconds = 3;
+  uint64 memoryLimitBytes = 4;
 }
 
 message ScriptedAction {
