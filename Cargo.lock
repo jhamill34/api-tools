@@ -165,7 +165,6 @@ dependencies = [
  "in_memory_storage",
  "javascript_runner",
  "local_file_loader",
- "lua_runner",
  "notify",
  "prost",
  "protobuf",
@@ -1412,21 +1411,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1edaf29e3517b49b8b746701e5648ccb5785cde1c119062cbabbc5d5cd115e42"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "lua_runner"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "common_data_structures",
- "core_entities",
- "credential_entities",
- "execution_engine",
- "mlua",
- "serde_json",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]

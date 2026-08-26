@@ -464,14 +464,17 @@ mod tests {
         }
     }
 
-    /// A `VersionedServiceTree` wrapping a single `SimpleCode` (Lua)
-    /// manifest - what `api.run` inside a workflow script needs to find
-    /// via `Engine::run` for a nested call to actually dispatch anywhere.
-    fn lua_simple_code_service() -> core_entities::service::VersionedServiceTree {
+    /// A `VersionedServiceTree` wrapping a single `SimpleCode` (JavaScript -
+    /// any dispatched-to language works equally well here, since the test
+    /// registers a `FakeCodeRunner` rather than a real runtime) manifest -
+    /// what `api.run` inside a workflow script needs to find via
+    /// `Engine::run` for a nested call to actually dispatch anywhere.
+    fn simple_code_service() -> core_entities::service::VersionedServiceTree {
         let mut code = core_entities::service::CodeResource::new();
         code.set_codeString("ignored - FakeCodeRunner doesn't execute it".to_owned());
-        code.language =
-            protobuf::EnumOrUnknown::new(core_entities::service::code_resource::Language::LUA);
+        code.language = protobuf::EnumOrUnknown::new(
+            core_entities::service::code_resource::Language::JAVASCRIPT,
+        );
 
         let mut simple_code = core_entities::service::SimpleCodeService::new();
         simple_code.code = protobuf::MessageField::some(code);
@@ -565,7 +568,7 @@ mod tests {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(SingleServiceLookup(lua_simple_code_service())));
+            Arc::new(Mutex::new(SingleServiceLookup(simple_code_service())));
         let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
             lookup,
             logger.clone(),
@@ -606,7 +609,7 @@ mod tests {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(SingleServiceLookup(lua_simple_code_service())));
+            Arc::new(Mutex::new(SingleServiceLookup(simple_code_service())));
         let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
             lookup,
             logger.clone(),
@@ -616,7 +619,7 @@ mod tests {
         {
             let mut engine = engine.write().unwrap();
             engine.register_language(
-                "lua",
+                "js",
                 Box::new(FakeCodeRunner {
                     calls: Arc::clone(&calls),
                 }),

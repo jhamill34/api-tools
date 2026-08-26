@@ -22,7 +22,6 @@ members = [
 	"runners/api_caller",
 	"runners/python_runner",
 	"runners/javascript_runner",
-	"runners/lua_runner",
 	"runners/user_input",
 	"runners/filtered_runner",
 	"runners/workflow_runner",

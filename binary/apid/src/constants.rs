@@ -10,7 +10,3 @@ pub const PYTHON_LANG: &str = "python";
 /// The [`execution_engine::Engine`] language key registered for the
 /// JavaScript code runner.
 pub const JAVASCRIPT_LANG: &str = "js";
-
-/// The [`execution_engine::Engine`] language key registered for the Lua
-/// code runner.
-pub const LUA_LANG: &str = "lua";
