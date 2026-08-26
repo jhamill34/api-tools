@@ -210,8 +210,8 @@ fn parse(input: &[InputTokens]) -> anyhow::Result<InputDescription> {
     let name = parse_name(&mut walker)?;
 
     let direction = match walker.peek() {
-        Some(&InputTokens::InputArrow) => Direction::Input,
-        Some(&InputTokens::OutputArrow) => Direction::Output,
+        Some(InputTokens::InputArrow) => Direction::Input,
+        Some(InputTokens::OutputArrow) => Direction::Output,
         _ => return Err(anyhow::anyhow!("Invalid arrow token")),
     };
     walker.advance();
@@ -231,7 +231,7 @@ fn parse(input: &[InputTokens]) -> anyhow::Result<InputDescription> {
 
 /// Consumes a leading identifier as the mapping's name.
 fn parse_name(walker: &mut Walker<InputTokens>) -> anyhow::Result<String> {
-    if let Some(&InputTokens::Identifier(ref name)) = walker.peek() {
+    if let Some(InputTokens::Identifier(name)) = walker.peek() {
         let name = name.clone();
         walker.advance();
         Ok(name)
@@ -249,11 +249,11 @@ fn parse_path(walker: &mut Walker<InputTokens>) -> anyhow::Result<(Vec<PathKey>,
     let mut path = Vec::new();
     let mut raw_path = String::new();
 
-    if let Some(&InputTokens::LeftBracket) = walker.peek() {
+    if let Some(InputTokens::LeftBracket) = walker.peek() {
         walker.advance();
         let key = parse_integer_key(walker)?;
 
-        if let Some(&InputTokens::RightBracket) = walker.peek() {
+        if let Some(InputTokens::RightBracket) = walker.peek() {
             walker.advance();
 
             raw_path.push('[');
@@ -275,7 +275,7 @@ fn parse_path(walker: &mut Walker<InputTokens>) -> anyhow::Result<(Vec<PathKey>,
 
     loop {
         match walker.peek() {
-            Some(&InputTokens::Dot) => {
+            Some(InputTokens::Dot) => {
                 walker.advance();
 
                 let key = parse_string_key(walker)?;
@@ -284,11 +284,11 @@ fn parse_path(walker: &mut Walker<InputTokens>) -> anyhow::Result<(Vec<PathKey>,
 
                 path.push(key);
             }
-            Some(&InputTokens::LeftBracket) => {
+            Some(InputTokens::LeftBracket) => {
                 walker.advance();
                 let key = parse_integer_key(walker)?;
 
-                if let Some(&InputTokens::RightBracket) = walker.peek() {
+                if let Some(InputTokens::RightBracket) = walker.peek() {
                     walker.advance();
 
                     raw_path.push('[');
@@ -311,7 +311,7 @@ fn parse_path(walker: &mut Walker<InputTokens>) -> anyhow::Result<(Vec<PathKey>,
 
 /// Consumes an identifier as a dotted path segment (`.foo`).
 fn parse_string_key(walker: &mut Walker<InputTokens>) -> anyhow::Result<PathKey> {
-    if let Some(&InputTokens::Identifier(ref key)) = walker.peek() {
+    if let Some(InputTokens::Identifier(key)) = walker.peek() {
         let key = key.clone();
         walker.advance();
         Ok(PathKey::Identifier(key))
@@ -327,11 +327,12 @@ fn parse_string_key(walker: &mut Walker<InputTokens>) -> anyhow::Result<PathKey>
 /// (`[0]` or `["key"]`).
 fn parse_integer_key(walker: &mut Walker<InputTokens>) -> anyhow::Result<PathKey> {
     match walker.peek() {
-        Some(&InputTokens::Integer(key)) => {
+        Some(InputTokens::Integer(key)) => {
+            let key = *key;
             walker.advance();
             Ok(PathKey::Integer(key))
         }
-        Some(&InputTokens::String(ref key)) => {
+        Some(InputTokens::String(key)) => {
             let key = key.clone();
             walker.advance();
             Ok(PathKey::String(key))
@@ -345,7 +346,7 @@ fn parse_integer_key(walker: &mut Walker<InputTokens>) -> anyhow::Result<PathKey
 
 /// Consumes a `<type>` annotation and resolves it to an [`InputType`].
 fn parse_input_type(walker: &mut Walker<InputTokens>) -> anyhow::Result<InputType> {
-    if let Some(&InputTokens::Lt) = walker.peek() {
+    if let Some(InputTokens::Lt) = walker.peek() {
         walker.advance();
     } else {
         return Err(anyhow::anyhow!(
@@ -353,7 +354,7 @@ fn parse_input_type(walker: &mut Walker<InputTokens>) -> anyhow::Result<InputTyp
         ));
     }
 
-    let input_type = if let Some(&InputTokens::Identifier(ref input_type)) = walker.peek() {
+    let input_type = if let Some(InputTokens::Identifier(input_type)) = walker.peek() {
         let input_type = match input_type.to_lowercase().as_str() {
             "string" => InputType::String,
             "integer" => InputType::Integer,
@@ -379,7 +380,7 @@ fn parse_input_type(walker: &mut Walker<InputTokens>) -> anyhow::Result<InputTyp
         ));
     };
 
-    if let Some(&InputTokens::Gt) = walker.peek() {
+    if let Some(InputTokens::Gt) = walker.peek() {
         walker.advance();
     } else {
         return Err(anyhow::anyhow!(
@@ -407,9 +408,9 @@ pub enum PathKey {
 impl ToString for PathKey {
     fn to_string(&self) -> String {
         match self {
-            &PathKey::Identifier(ref key) => key.to_string(),
-            &PathKey::Integer(ref key) => key.to_string(),
-            &PathKey::String(ref key) => format!("\"{key}\""),
+            PathKey::Identifier(key) => key.to_string(),
+            PathKey::Integer(key) => key.to_string(),
+            PathKey::String(key) => format!("\"{key}\""),
         }
     }
 }

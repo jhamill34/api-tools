@@ -23,7 +23,7 @@ pub fn get_input(
     let mut input_example = serde_json::Map::new();
 
     match manifest {
-        &Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
             let operation = service
                 .commonApi
                 .operations
@@ -69,7 +69,7 @@ pub fn get_input(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -85,16 +85,16 @@ pub fn get_input(
                 input_example.insert(param.name.clone(), default_value);
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(manifest)) => {
             for param in &manifest.inputs {
                 let default_value = parameter_to_value(param.param.type_);
                 input_example.insert(param.param.name.clone(), default_value);
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
         _ => bail!("Unknown manifest type"),
@@ -118,7 +118,7 @@ pub fn get_output(
     let manifest = &service.manifest.v2().value;
 
     match manifest {
-        &Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
             let operation = service
                 .commonApi
                 .operations
@@ -160,7 +160,7 @@ pub fn get_output(
                 Ok(serde_json::Value::Object(serde_json::Map::new()))
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -176,7 +176,7 @@ pub fn get_output(
 
             Ok(serde_json::Value::Object(output_examples))
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(manifest)) => {
             let mut output_examples = serde_json::Map::new();
             for param in &manifest.outputSelectors {
                 // TODO: use JMES path to determine type
@@ -186,10 +186,10 @@ pub fn get_output(
 
             Ok(serde_json::Value::Object(output_examples))
         }
-        &Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
         _ => bail!("Unknown manifest type"),
@@ -237,7 +237,7 @@ pub fn schema_to_value(
     required: bool,
 ) -> serde_json::Value {
     match schema {
-        &Some(core_entities::service::schema::Value::Ref(ref reference)) => {
+        Some(core_entities::service::schema::Value::Ref(reference)) => {
             let schema = types.get(reference).cloned().and_then(|s| s.value);
 
             if seen.contains_key(reference) {
@@ -254,7 +254,7 @@ pub fn schema_to_value(
             seen.remove(reference);
             schema
         }
-        &Some(core_entities::service::schema::Value::SchemaObject(ref schema)) => {
+        Some(core_entities::service::schema::Value::SchemaObject(schema)) => {
             schema_object_to_value(schema, types, seen, path, required)
         }
         _ => serde_json::Value::Object(serde_json::Map::new()),
