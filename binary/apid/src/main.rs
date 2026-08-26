@@ -305,9 +305,9 @@ impl Engine for ApiDaemon {
                     &responses,
                     &signals,
                     async move {
-                        let (operation_name, workflow, workflow_runner) = resolution?;
+                        let (service_name, operation_name, workflow, workflow_runner) = resolution?;
                         let result = workflow_runner
-                            .run(&operation_name, &workflow, input, &ctx)
+                            .run(&service_name, &operation_name, &workflow, input, &ctx)
                             .await?;
 
                         Ok(execution_engine::wrap_result(result, ctx.raw_response))
@@ -537,6 +537,10 @@ fn construct_execution_engine(
     #[cfg(feature = "lua")]
     let lua_runner = lua_runner::LuaActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
+    #[cfg(feature = "workflow")]
+    let workflow_adapter =
+        workflow_runner::WorkflowAdapter::spawn(Arc::clone(&engine), workflow_logger.clone());
+
     #[cfg(feature = "input")]
     let input_handler = Box::new(user_input::UserInput::new(signals));
 
@@ -560,7 +564,7 @@ fn construct_execution_engine(
         engine.register_language(constants::LUA_LANG, Box::new(lua_runner));
 
         #[cfg(feature = "workflow")]
-        engine.register_workflow_runner(Arc::new(workflow_runner::WorkflowAdapter::spawn()));
+        engine.register_workflow_runner(Arc::new(workflow_adapter));
 
         #[cfg(feature = "input")]
         engine.register_input(input_handler);
@@ -870,6 +874,31 @@ mod tests {
     }
 
     #[cfg(feature = "workflow")]
+    struct EmptyLookup;
+
+    #[cfg(feature = "workflow")]
+    impl EngineLookup for EmptyLookup {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            None
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    #[cfg(feature = "workflow")]
+    fn empty_engine() -> Arc<RwLock<execution_engine::Engine>> {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(EmptyLookup));
+        Arc::new(RwLock::new(execution_engine::Engine::new(lookup, logger)))
+    }
+
+    #[cfg(feature = "workflow")]
     #[tokio::test]
     async fn workflow_adapter_runs_lua_source_from_the_manifest() {
         use execution_engine::services::WorkflowRunner as _;
@@ -877,11 +906,19 @@ mod tests {
         let mut manifest = core_entities::service::WorkflowService::new();
         manifest.set_codeString("return input.x + 1".to_owned());
 
-        let adapter = workflow_runner::WorkflowAdapter::spawn();
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let adapter = workflow_runner::WorkflowAdapter::spawn(empty_engine(), logger);
         let ctx = execution_engine::services::EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("execute", &manifest, serde_json::json!({ "x": 41 }), &ctx)
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                serde_json::json!({ "x": 41 }),
+                &ctx,
+            )
             .await
             .expect("workflow run should succeed");
 
@@ -896,11 +933,13 @@ mod tests {
         let mut manifest = core_entities::service::WorkflowService::new();
         manifest.set_resourcePath("workflow.lua".to_owned());
 
-        let adapter = workflow_runner::WorkflowAdapter::spawn();
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let adapter = workflow_runner::WorkflowAdapter::spawn(empty_engine(), logger);
         let ctx = execution_engine::services::EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("execute", &manifest, serde_json::Value::Null, &ctx)
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
             .await;
 
         assert!(
@@ -909,6 +948,119 @@ mod tests {
                 Err(execution_engine::error::ExecutionEngine::Unimplemented(_))
             ),
             "expected Unimplemented, got {result:?}"
+        );
+    }
+
+    #[cfg(feature = "workflow")]
+    struct FakeCodeRunner {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[cfg(feature = "workflow")]
+    impl execution_engine::services::CodeRunner for FakeCodeRunner {
+        fn run(
+            &self,
+            name: &str,
+            operation_name: &str,
+            _source_code: &str,
+            params: serde_json::Value,
+            _ctx: &execution_engine::services::EngineInputContext,
+        ) -> execution_engine::error::Result<serde_json::Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((name.to_owned(), operation_name.to_owned()));
+            Ok(params)
+        }
+    }
+
+    #[cfg(feature = "workflow")]
+    struct SingleServiceLookup(core_entities::service::VersionedServiceTree);
+
+    #[cfg(feature = "workflow")]
+    impl EngineLookup for SingleServiceLookup {
+        fn get_service(&self, id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            (id == "other").then(|| self.0.clone())
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    /// A `VersionedServiceTree` wrapping a single `SimpleCode` (Lua)
+    /// manifest - what `api.run` inside a workflow script needs to find
+    /// via `Engine::run` for a nested call to actually dispatch anywhere.
+    #[cfg(feature = "workflow")]
+    fn lua_simple_code_service() -> core_entities::service::VersionedServiceTree {
+        let mut code = core_entities::service::CodeResource::new();
+        code.set_codeString("ignored - FakeCodeRunner doesn't execute it".to_owned());
+        code.language =
+            protobuf::EnumOrUnknown::new(core_entities::service::code_resource::Language::LUA);
+
+        let mut simple_code = core_entities::service::SimpleCodeService::new();
+        simple_code.code = protobuf::MessageField::some(code);
+
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().set_simpleCode(simple_code);
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree
+    }
+
+    #[cfg(feature = "workflow")]
+    #[tokio::test]
+    async fn workflow_adapter_api_run_bridges_into_the_existing_sync_engine() {
+        use execution_engine::services::WorkflowRunner as _;
+
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(SingleServiceLookup(lua_simple_code_service())));
+        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
+            lookup,
+            logger.clone(),
+        )));
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        {
+            let mut engine = engine.write().unwrap();
+            engine.register_language(
+                "lua",
+                Box::new(FakeCodeRunner {
+                    calls: Arc::clone(&calls),
+                }),
+            );
+        }
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString("return api.run('other.op', { hello = 'world' })".to_owned());
+
+        let adapter = workflow_runner::WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let ctx = execution_engine::services::EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .await
+            .expect("workflow run should succeed");
+
+        assert_eq!(
+            result,
+            serde_json::json!([{ "hello": "world" }]),
+            "expected Engine::run's usual single-element array wrapping to apply here too, \
+             proving api.run really went through Engine::run rather than a shortcut"
+        );
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            [("other".to_owned(), "op".to_owned())],
+            "expected api.run to reach the fake code runner via the real Engine, with the \
+             workflow's own service name ('svc') resolving `this.xxx` - not used here since \
+             the call already names 'other' explicitly, but proves the bridge is genuinely \
+             wired to Engine::run rather than stubbed"
         );
     }
 }

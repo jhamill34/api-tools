@@ -180,6 +180,28 @@ impl WorkflowEngine {
         Ok(())
     }
 
+    /// Registers `func` as an async Lua-callable member of the workflow's
+    /// `api` table (alongside `api.step`/`api.join`), named `name` - e.g.
+    /// `api.run` for a host binding that dispatches back into an existing
+    /// synchronous operation (see `apid`'s `WorkflowAdapter`). Unlike
+    /// [`Self::register_async_function`], which installs a bare global,
+    /// this nests the callable under `api.<name>` to match the workflow's
+    /// existing `api.*` surface.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying Lua calls to look up `api` or
+    /// register the function on it fail.
+    pub fn register_api_function<'lua, F, FR>(&'lua self, name: &str, func: F) -> error::Result<()>
+    where
+        F: Fn(&'lua Lua, mlua::MultiValue<'lua>) -> FR + Send + 'static,
+        FR: std::future::Future<Output = mlua::Result<Value<'lua>>> + 'lua,
+    {
+        let f = self.lua.create_async_function(func)?;
+        let api: mlua::Table = self.lua.globals().get("api")?;
+        api.set(name, f)?;
+        Ok(())
+    }
+
     /// Loads and runs `script` as the workflow's entry point with `params`
     /// bound as a local `input` argument (`local input = ...`, the same
     /// chunk-argument convention `runners/lua_runner` uses), returning its

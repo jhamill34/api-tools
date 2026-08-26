@@ -373,12 +373,13 @@ impl Engine {
     }
 
     /// Resolves `identifier` against a `Workflow`-kind manifest, returning
-    /// the fully **owned** pieces (`operation_name`, the manifest's cloned
-    /// `WorkflowService`, and the registered `WorkflowRunner` cloned out of
-    /// its `Arc`) a caller needs to run it - entirely synchronously, with
-    /// every lock this method touches (the `lookup` mutex, and whatever
-    /// lock wraps the `Engine` itself in the caller, e.g. `apid`'s
-    /// `Arc<std::sync::RwLock<Engine>>`) dropped before it returns.
+    /// the fully **owned** pieces (`service_name`, `operation_name`, the
+    /// manifest's cloned `WorkflowService`, and the registered
+    /// `WorkflowRunner` cloned out of its `Arc`) a caller needs to run it -
+    /// entirely synchronously, with every lock this method touches (the
+    /// `lookup` mutex, and whatever lock wraps the `Engine` itself in the
+    /// caller, e.g. `apid`'s `Arc<std::sync::RwLock<Engine>>`) dropped
+    /// before it returns.
     ///
     /// This split exists so a caller can `.await` the returned runner with
     /// *zero* locks held across the await point: holding a
@@ -396,6 +397,7 @@ impl Engine {
         identifier: &str,
         context: &EngineInputContext,
     ) -> error::Result<(
+        String,
         String,
         core_entities::service::WorkflowService,
         Arc<dyn WorkflowRunner>,
@@ -421,7 +423,12 @@ impl Engine {
                     error::ExecutionEngine::NotFound("Workflow runner not registered".into())
                 })?;
 
-                Ok((operation_name.to_owned(), workflow.clone(), workflow_runner))
+                Ok((
+                    service_name.to_owned(),
+                    operation_name.to_owned(),
+                    workflow.clone(),
+                    workflow_runner,
+                ))
             }
             _ => Err(error::ExecutionEngine::Unimplemented(
                 "resolve_workflow called on a non-Workflow manifest".into(),
@@ -452,12 +459,12 @@ impl Engine {
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
-        let (operation_name, workflow, workflow_runner) =
+        let (service_name, operation_name, workflow, workflow_runner) =
             self.resolve_workflow(identifier, context)?;
 
         self.log(identifier, "WORKFLOW", "STARTED")?;
         let result = workflow_runner
-            .run(&operation_name, &workflow, params, context)
+            .run(&service_name, &operation_name, &workflow, params, context)
             .await?;
         self.log(identifier, "WORKFLOW", "COMPLETED")?;
 
@@ -618,22 +625,24 @@ mod tests {
     }
 
     struct FakeWorkflowRunner {
-        calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
     }
 
     #[async_trait::async_trait]
     impl WorkflowRunner for FakeWorkflowRunner {
         async fn run(
             &self,
-            _name: &str,
+            name: &str,
+            operation_name: &str,
             manifest: &core_entities::service::WorkflowService,
             _params: Value,
             _ctx: &EngineInputContext,
         ) -> error::Result<Value> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(manifest.codeString().to_owned());
+            self.calls.lock().unwrap().push((
+                name.to_owned(),
+                operation_name.to_owned(),
+                manifest.codeString().to_owned(),
+            ));
             Ok(Value::String("workflow ran".into()))
         }
     }
@@ -665,7 +674,16 @@ mod tests {
             result,
             Value::Array(vec![Value::String("workflow ran".into())])
         );
-        assert_eq!(calls.lock().unwrap().as_slice(), ["return 42"]);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            [(
+                "svc".to_owned(),
+                "execute".to_owned(),
+                "return 42".to_owned()
+            )],
+            "expected the runner to receive the service name and operation name as two \
+             distinct arguments, not the operation name in both"
+        );
     }
 
     #[tokio::test]

@@ -43,6 +43,8 @@ common_data_structures = { path = "../../common/data_structures" }
 
 anyhow = { workspace = true, features = ["backtrace"] }
 async-trait = { workspace = true }
+chrono = { workspace = true }
+mlua = { workspace = true }
 
 dhat = { workspace = true }
 
