@@ -223,13 +223,13 @@ fn handle_operation(
         sink.insert("parameters".into(), parameters.into());
     }
 
-    if let &Some(ref source_body) = &source.requestBody.0 {
+    if let Some(source_body) = &source.requestBody.0 {
         let mut request_body = serde_json::Map::new();
         handle_request_body(&mut request_body, source_body)?;
         sink.insert("requestBody".into(), request_body.into());
     }
 
-    if let &Some(ref common_responses) = &source.apiResponses.0 {
+    if let Some(common_responses) = &source.apiResponses.0 {
         let mut responses = serde_json::Map::new();
 
         for (status, common_response) in &common_responses.apiResponses {
@@ -294,7 +294,7 @@ fn handle_media(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::MediaType,
 ) -> error::Result<()> {
-    if let &Some(ref common_schema) = &source.schema.0 {
+    if let Some(common_schema) = &source.schema.0 {
         let mut schema = serde_json::Map::new();
         handle_schema(&mut schema, common_schema)?;
         sink.insert("schema".into(), schema.into());
@@ -327,7 +327,7 @@ fn handle_parameter(
         sink.insert("description".into(), source.description.clone().into());
     }
 
-    if let &Some(ref common_schema) = &source.schema.0 {
+    if let Some(common_schema) = &source.schema.0 {
         let mut schema = serde_json::Map::new();
         handle_schema(&mut schema, common_schema)?;
         sink.insert("schema".into(), schema.into());
@@ -346,10 +346,10 @@ fn handle_schema(
     // TODO: extract into a referece based on a flag
 
     match &source.value {
-        &Some(service::schema::Value::Ref(ref reference)) => {
+        Some(service::schema::Value::Ref(reference)) => {
             sink.insert("$ref".into(), reference.clone().into());
         }
-        &Some(service::schema::Value::SchemaObject(ref schema)) => {
+        Some(service::schema::Value::SchemaObject(schema)) => {
             match schema.type_.enum_value() {
                 Ok(service::schema_object::SchemaType::STRING) => {
                     sink.insert("type".into(), "string".into());
@@ -387,7 +387,7 @@ fn handle_schema(
                 Ok(service::schema_object::SchemaType::ARRAY) => {
                     sink.insert("type".into(), "array".into());
 
-                    if let &Some(ref common_items) = &schema.items.0 {
+                    if let Some(common_items) = &schema.items.0 {
                         let mut items = serde_json::Map::new();
                         handle_schema(&mut items, common_items)?;
                         sink.insert("items".into(), items.into());
@@ -398,13 +398,13 @@ fn handle_schema(
                 _ => {}
             }
         }
-        &Some(service::schema::Value::AllOf(ref values)) => {
+        Some(service::schema::Value::AllOf(values)) => {
             handle_composed_schema(sink, "allOf", values)?;
         }
-        &Some(service::schema::Value::AnyOf(ref values)) => {
+        Some(service::schema::Value::AnyOf(values)) => {
             handle_composed_schema(sink, "anyOf", values)?;
         }
-        &Some(service::schema::Value::OneOf(ref values)) => {
+        Some(service::schema::Value::OneOf(values)) => {
             handle_composed_schema(sink, "oneOf", values)?;
         }
         _ => {}
