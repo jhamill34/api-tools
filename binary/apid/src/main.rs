@@ -359,7 +359,7 @@ impl Engine for ApiDaemon {
         let req = req.into_inner();
 
         let mut signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(&mut (_, ref tx)) = signals.get_mut(&req.execution_id) {
+        if let Some((_, tx)) = signals.get_mut(&req.execution_id) {
             let value = serde_json::from_str::<serde_json::Value>(&req.input);
             if let Ok(value) = value {
                 tx.send(value).map_err(|e| {
