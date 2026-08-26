@@ -12,6 +12,7 @@ use crate::error;
 
 /// Context an [`Engine`](crate::Engine) run carries through to whichever
 /// output port it dispatches to.
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct EngineInputContext {
     /// The identifier of the service that triggered this run, if any (used
@@ -139,12 +140,18 @@ pub trait FilteredRunner {
 #[async_trait::async_trait]
 pub trait WorkflowRunner: Send + Sync {
     /// Executes `manifest`'s Lua source with `params`, applying its own
-    /// `timeoutSeconds`/`memoryLimitBytes` budget.
+    /// `timeoutSeconds`/`memoryLimitBytes` budget. `name` is the service
+    /// name (not the operation name) - matching every sibling `*Runner`
+    /// trait's `(name, operation_name, ...)` convention - so an
+    /// implementation that bridges back into [`Engine::run`](crate::Engine::run)
+    /// (e.g. an `api.run` binding) can build an [`EngineInputContext`]
+    /// whose `parent` correctly resolves a nested `this.xxx` reference.
     ///
     /// # Errors
     async fn run(
         &self,
         name: &str,
+        operation_name: &str,
         manifest: &WorkflowService,
         params: Value,
         ctx: &EngineInputContext,

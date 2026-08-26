@@ -200,3 +200,37 @@ async fn run_binds_params_as_a_local_input_argument() {
         serde_json::json!({ "greeting": "hello world", "doubled": 42 })
     );
 }
+
+#[tokio::test]
+async fn register_api_function_nests_the_callable_under_the_api_table() {
+    let engine = WorkflowEngine::new().expect("build engine");
+    engine
+        .register_api_function("run", move |lua, args: mlua::MultiValue| {
+            let id: String = mlua::FromLuaMulti::from_lua_multi(args, lua).unwrap_or_default();
+            async move {
+                Ok(mlua::Value::String(
+                    lua.create_string(&format!("ran {id}"))?,
+                ))
+            }
+        })
+        .expect("register api.run");
+
+    let script = r#"
+        -- also proves api.step/api.join (installed by the engine itself)
+        -- still work alongside a function registered via
+        -- register_api_function, i.e. it's added to the same table, not
+        -- replacing it.
+        local step = api.step(function() return "stepped" end)
+        return { ran = api.run("svc.op"), stepped = step:get() }
+    "#;
+
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+
+    assert_eq!(
+        result,
+        serde_json::json!({ "ran": "ran svc.op", "stepped": "stepped" })
+    );
+}
