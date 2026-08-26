@@ -100,7 +100,7 @@ fn collect_operations<R: io::Read>(
     schemas: &mut HashMap<String, service::Schema>,
 ) -> error::Result<Vec<(String, service::Operation)>> {
     let reference = handle_reference(item, root, fetcher, cache, &mut HashSet::new())?;
-    let item = reference.as_ref().map_or(item, |&(_, ref item)| item);
+    let item = reference.as_ref().map_or(item, |(_, item)| item);
 
     let parameters: Vec<serde_json::Value> = default_field(item, "parameters")?;
     let mut common_params = vec![];
@@ -286,7 +286,7 @@ fn handle_parameter<R: io::Read>(
     schemas: &mut HashMap<String, service::Schema>,
 ) -> error::Result<()> {
     let reference = handle_reference(source, root, fetcher, cache, &mut HashSet::new())?;
-    let source = reference.as_ref().map_or(source, |&(_, ref item)| item);
+    let source = reference.as_ref().map_or(source, |(_, item)| item);
 
     let in_ = required_field::<String>(source, "in")?;
     let in_ = match in_.as_str() {
@@ -325,7 +325,7 @@ fn handle_request_body<R: io::Read>(
     schemas: &mut HashMap<String, service::Schema>,
 ) -> error::Result<()> {
     let reference = handle_reference(source, root, fetcher, cache, &mut HashSet::new())?;
-    let source = reference.as_ref().map_or(source, |&(_, ref item)| item);
+    let source = reference.as_ref().map_or(source, |(_, item)| item);
 
     if let Some(description) = optional_field(source, "description")? {
         sink.description = description;
@@ -353,7 +353,7 @@ fn handle_response<R: io::Read>(
     schemas: &mut HashMap<String, service::Schema>,
 ) -> error::Result<()> {
     let reference = handle_reference(source, root, fetcher, cache, &mut HashSet::new())?;
-    let source = reference.as_ref().map_or(source, |&(_, ref item)| item);
+    let source = reference.as_ref().map_or(source, |(_, item)| item);
 
     let content: HashMap<String, serde_json::Value> = default_field(source, "content")?;
     for (key, value) in &content {

@@ -97,8 +97,8 @@ pub fn merge(
             .ok_or_else(|| error::ServiceLoader::NotFound("Auth Configuration".into()))?;
         let oauth_config = oauth_config.mut_oauthConfig();
 
-        if let &Some(core_entities::service::swagger_overrides::AuthOverrides::OauthConfig(
-            ref oauth_config_override,
+        if let Some(core_entities::service::swagger_overrides::AuthOverrides::OauthConfig(
+            oauth_config_override,
         )) = &overrides.authOverrides
         {
             apply_if_exists!(name, oauth_config_override => oauth_config);

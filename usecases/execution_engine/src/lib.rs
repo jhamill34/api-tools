@@ -187,7 +187,7 @@ impl Engine {
         // ScriptedAction -> ScriptRunner
 
         if identifier == "$input" {
-            if let &Some(ref input_handler) = &self.input_handler {
+            if let Some(input_handler) = &self.input_handler {
                 return input_handler.run(params, context);
             }
 
@@ -209,8 +209,8 @@ impl Engine {
         let manifest = service.manifest.v2();
 
         let result = match &manifest.value {
-            &Some(service_manifest_latest::Value::Swagger(ref swagger)) => {
-                if let &Some(ref connector) = &self.connector {
+            Some(service_manifest_latest::Value::Swagger(swagger)) => {
+                if let Some(connector) = &self.connector {
                     let api = &service.commonApi;
                     let creds = credentials.as_ref();
 
@@ -233,7 +233,7 @@ impl Engine {
                     ))
                 }
             }
-            &Some(service_manifest_latest::Value::Action(ref action)) => {
+            Some(service_manifest_latest::Value::Action(action)) => {
                 let operation = action
                     .operations
                     .iter()
@@ -275,8 +275,8 @@ impl Engine {
                     )))
                 }
             }
-            &Some(service_manifest_latest::Value::ApiWrapped(ref api_wrapped)) => {
-                if let &Some(ref filtered_runner) = &self.filtered_runner {
+            Some(service_manifest_latest::Value::ApiWrapped(api_wrapped)) => {
+                if let Some(filtered_runner) = &self.filtered_runner {
                     self.log(identifier, "API_WRAPPED", "STARTED")?;
                     let result = filtered_runner.run(
                         service_name,
@@ -294,7 +294,7 @@ impl Engine {
                     ))
                 }
             }
-            &Some(service_manifest_latest::Value::SimpleCode(ref simple_code)) => {
+            Some(service_manifest_latest::Value::SimpleCode(simple_code)) => {
                 match simple_code.code.language.enum_value() {
                     Ok(Language::PYTHON) => self.dispatch_code_runner(
                         identifier,
@@ -371,7 +371,7 @@ impl Engine {
         let manifest = service.manifest.v2();
 
         match &manifest.value {
-            &Some(service_manifest_latest::Value::Workflow(ref workflow)) => {
+            Some(service_manifest_latest::Value::Workflow(workflow)) => {
                 let workflow_runner = self.workflow_runner.clone().ok_or_else(|| {
                     error::ExecutionEngine::NotFound("Workflow runner not registered".into())
                 })?;
@@ -451,7 +451,7 @@ impl Engine {
 
         matches!(
             &manifest.value,
-            &Some(service_manifest_latest::Value::Workflow(_))
+            Some(service_manifest_latest::Value::Workflow(_))
         )
     }
 
@@ -498,7 +498,7 @@ impl Engine {
         let manifest = service.manifest.v2();
 
         match &manifest.value {
-            &Some(service_manifest_latest::Value::Swagger(ref swagger)) => {
+            Some(service_manifest_latest::Value::Swagger(swagger)) => {
                 let async_connector = self.async_connector.clone().ok_or_else(|| {
                     error::ExecutionEngine::NotFound("Async data connector not registered".into())
                 })?;
