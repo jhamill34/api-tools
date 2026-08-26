@@ -532,9 +532,6 @@ fn construct_execution_engine(
     let js_runner =
         javascript_runner::JsActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
 
-    #[cfg(feature = "lua")]
-    let lua_runner = lua_runner::LuaActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
-
     #[cfg(feature = "workflow")]
     let workflow_adapter =
         workflow_runner::WorkflowAdapter::spawn(Arc::clone(&engine), workflow_logger.clone());
@@ -560,9 +557,6 @@ fn construct_execution_engine(
 
         #[cfg(feature = "javascript")]
         engine.register_language(constants::JAVASCRIPT_LANG, Box::new(js_runner));
-
-        #[cfg(feature = "lua")]
-        engine.register_language(constants::LUA_LANG, Box::new(lua_runner));
 
         #[cfg(feature = "workflow")]
         engine.register_workflow_runner(Arc::new(workflow_adapter));

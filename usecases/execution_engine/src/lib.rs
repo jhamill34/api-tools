@@ -358,25 +358,13 @@ impl Engine {
                             ))
                         }
                     }
-                    Ok(Language::LUA) => {
-                        if let Some(code_runner) = self.code_runners.get("lua") {
-                            self.log(identifier, "SIMPLE_CODE", "STARTED")?;
-                            let result = code_runner.run(
-                                service_name,
-                                operation_name,
-                                simple_code.code.codeString(),
-                                params,
-                                context,
-                            )?;
-                            self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
-
-                            Ok(result)
-                        } else {
-                            Err(error::ExecutionEngine::NotFound(
-                                "Code runner not found for lua".into(),
-                            ))
-                        }
-                    }
+                    // LUA is deliberately not dispatched to here - see #73:
+                    // `Workflow`-kind manifests (via `WorkflowRunner`) are
+                    // the replacement for Lua `SimpleCode` operations, not
+                    // a second parallel Lua execution path through this
+                    // arm. The `LUA` enum variant itself stays defined
+                    // (harmless, and a smaller footprint than removing a
+                    // wire enum value), it's just unreachable here now.
                     _ => Err(error::ExecutionEngine::NotFound("Unknown language".into())),
                 }
             }
