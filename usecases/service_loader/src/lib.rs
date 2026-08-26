@@ -183,7 +183,8 @@ impl ServiceLoader {
         if !only_manifest && value.v1().manifest.v2().has_swagger() {
             match load_credentials(fetcher) {
                 Ok(creds) => output.handle_credentials(id, creds)?,
-                Err(error::ServiceLoader::Io { source }) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(error::ServiceLoader::Io { source })
+                    if source.kind() == io::ErrorKind::NotFound => {}
                 Err(err) => return Err(err),
             }
 
@@ -249,7 +250,11 @@ mod test {
     }
 
     impl LoaderOutput for MockOutput {
-        fn handle_service(&mut self, _id: &str, _service: VersionedServiceTree) -> error::Result<()> {
+        fn handle_service(
+            &mut self,
+            _id: &str,
+            _service: VersionedServiceTree,
+        ) -> error::Result<()> {
             Ok(())
         }
 
@@ -292,7 +297,10 @@ mod test {
 
         let result = ServiceLoader::new().load("svc", &fetcher, &mut output, false, false);
 
-        assert!(result.is_err(), "expected malformed credentials to surface as an error, got Ok");
+        assert!(
+            result.is_err(),
+            "expected malformed credentials to surface as an error, got Ok"
+        );
         assert!(output.credentials.is_none());
     }
 
@@ -307,6 +315,9 @@ mod test {
 
         let result = ServiceLoader::new().load("svc", &fetcher, &mut output, true, false);
 
-        assert!(result.is_err(), "expected malformed config to surface as an error, got Ok");
+        assert!(
+            result.is_err(),
+            "expected malformed config to surface as an error, got Ok"
+        );
     }
 }
