@@ -40,7 +40,7 @@ pub fn load_configuration<R: io::Read>(
 /// intermediate path segment lands on a non-object value.
 fn traverse_map(current: &mut serde_json::Value, parts: &[&str], value: &str) -> error::Result<()> {
     if let Some(next) = parts.first() {
-        if let &mut serde_json::Value::Object(ref mut current) = current {
+        if let serde_json::Value::Object(current) = current {
             let key = (*next).to_owned();
             let child = current
                 .entry(key)
