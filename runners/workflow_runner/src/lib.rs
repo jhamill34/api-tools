@@ -380,7 +380,7 @@ mod tests {
     fn empty_engine() -> Arc<RwLock<execution_engine::Engine>> {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(EmptyLookup));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(EmptyLookup);
         Arc::new(RwLock::new(execution_engine::Engine::new(lookup, logger)))
     }
 
@@ -529,8 +529,8 @@ mod tests {
     async fn workflow_adapter_api_call_bridges_into_the_registered_async_connector() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(SingleServiceLookup(swagger_service())));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(SingleServiceLookup(swagger_service()));
         let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
             lookup,
             logger.clone(),
@@ -567,8 +567,8 @@ mod tests {
     async fn workflow_adapter_api_call_errors_for_a_non_swagger_manifest() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(SingleServiceLookup(simple_code_service())));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(SingleServiceLookup(simple_code_service()));
         let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
             lookup,
             logger.clone(),
@@ -608,8 +608,8 @@ mod tests {
     async fn workflow_adapter_api_run_bridges_into_the_existing_sync_engine() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(SingleServiceLookup(simple_code_service())));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(SingleServiceLookup(simple_code_service()));
         let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
             lookup,
             logger.clone(),

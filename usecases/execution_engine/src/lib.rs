@@ -34,7 +34,7 @@ use services::{
     AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
     EngineInputContext, EngineLookup, FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
 };
-use std::{collections::HashMap, sync::Mutex};
+use std::collections::HashMap;
 
 use chrono::offset::Local;
 use core_entities::service::{code_resource::Language, service_manifest_latest};
@@ -60,8 +60,11 @@ pub fn wrap_result(result: Value, raw_response: bool) -> Value {
 /// manifest's type.
 pub struct Engine {
     /// The input port used to resolve a service/its credentials by ID at
-    /// execution time.
-    lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>,
+    /// execution time. `EngineLookup`'s methods take `&self` only - no
+    /// mutation - so this holds no lock of its own; an implementation
+    /// backed by mutable state (e.g. `apid`'s background-loaded service
+    /// repository) is responsible for its own internal synchronization.
+    lookup: Arc<dyn EngineLookup + Send + Sync>,
 
     /// Where every dispatched run is logged.
     logger: LogWriter,
@@ -105,7 +108,7 @@ impl Engine {
     /// Creates an [`Engine`] with no adapters registered yet; use the
     /// `register_*` methods to add them.
     #[inline]
-    pub fn new(lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>>, logger: LogWriter) -> Self {
+    pub fn new(lookup: Arc<dyn EngineLookup + Send + Sync>, logger: LogWriter) -> Self {
         Self {
             lookup,
             logger,
@@ -216,19 +219,12 @@ impl Engine {
         let (service_name, operation_name) =
             Self::parse_identifier(identifier, context.parent.as_deref())?;
 
-        let (service, credentials) = {
-            let lookup = self
-                .lookup
-                .lock()
-                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
-            let service = lookup
-                .get_service(service_name)
-                .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
+        let service = self
+            .lookup
+            .get_service(service_name)
+            .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
+        let credentials = self.lookup.get_credentials(service_name);
 
-            let credentials = lookup.get_credentials(service_name);
-
-            (service, credentials)
-        };
         let service = service.v1();
         let manifest = service.manifest.v2();
 
@@ -320,44 +316,24 @@ impl Engine {
             }
             &Some(service_manifest_latest::Value::SimpleCode(ref simple_code)) => {
                 match simple_code.code.language.enum_value() {
-                    Ok(Language::PYTHON) => {
-                        if let Some(code_runner) = self.code_runners.get("python") {
-                            self.log(identifier, "SIMPLE_CODE", "STARTED")?;
-                            let result = code_runner.run(
-                                service_name,
-                                operation_name,
-                                simple_code.code.codeString(),
-                                params,
-                                context,
-                            )?;
-                            self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
-
-                            Ok(result)
-                        } else {
-                            Err(error::ExecutionEngine::NotFound(
-                                "Code runner not found for python".into(),
-                            ))
-                        }
-                    }
-                    Ok(Language::JAVASCRIPT) => {
-                        if let Some(code_runner) = self.code_runners.get("js") {
-                            self.log(identifier, "SIMPLE_CODE", "STARTED")?;
-                            let result = code_runner.run(
-                                service_name,
-                                operation_name,
-                                simple_code.code.codeString(),
-                                params,
-                                context,
-                            )?;
-                            self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
-
-                            Ok(result)
-                        } else {
-                            Err(error::ExecutionEngine::NotFound(
-                                "Code runner not found for python".into(),
-                            ))
-                        }
-                    }
+                    Ok(Language::PYTHON) => self.dispatch_code_runner(
+                        identifier,
+                        service_name,
+                        operation_name,
+                        "python",
+                        simple_code.code.codeString(),
+                        params,
+                        context,
+                    ),
+                    Ok(Language::JAVASCRIPT) => self.dispatch_code_runner(
+                        identifier,
+                        service_name,
+                        operation_name,
+                        "js",
+                        simple_code.code.codeString(),
+                        params,
+                        context,
+                    ),
                     // LUA is deliberately not dispatched to here - see #73:
                     // `Workflow`-kind manifests (via `WorkflowRunner`) are
                     // the replacement for Lua `SimpleCode` operations, not
@@ -407,15 +383,10 @@ impl Engine {
         let (service_name, operation_name) =
             Self::parse_identifier(identifier, context.parent.as_deref())?;
 
-        let service = {
-            let lookup = self
-                .lookup
-                .lock()
-                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
-            lookup
-                .get_service(service_name)
-                .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?
-        };
+        let service = self
+            .lookup
+            .get_service(service_name)
+            .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
         let service = service.v1();
         let manifest = service.manifest.v2();
 
@@ -491,13 +462,9 @@ impl Engine {
             return false;
         };
 
-        let Ok(lookup) = self.lookup.lock() else {
+        let Some(service) = self.lookup.get_service(service_name) else {
             return false;
         };
-        let Some(service) = lookup.get_service(service_name) else {
-            return false;
-        };
-        drop(lookup);
 
         let service = service.v1();
         let manifest = service.manifest.v2();
@@ -538,17 +505,12 @@ impl Engine {
         let (service_name, operation_name) =
             Self::parse_identifier(identifier, context.parent.as_deref())?;
 
-        let (service, credentials) = {
-            let lookup = self
-                .lookup
-                .lock()
-                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
-            let service = lookup
-                .get_service(service_name)
-                .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
-            let credentials = lookup.get_credentials(service_name);
-            (service, credentials)
-        };
+        let service = self
+            .lookup
+            .get_service(service_name)
+            .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
+        let credentials = self.lookup.get_credentials(service_name);
+
         let service = service.v1();
         let manifest = service.manifest.v2();
 
@@ -571,6 +533,37 @@ impl Engine {
                 "resolve_data_connector called on a non-Swagger manifest".into(),
             )),
         }
+    }
+
+    /// Dispatches to the [`CodeRunner`] registered under `lang_key`,
+    /// logging `SIMPLE_CODE` start/completion - the shared body of
+    /// [`Engine::run`]'s `SimpleCode` dispatch, parameterized by language
+    /// so `python`/`javascript` (and any future language) share one
+    /// implementation instead of near-identical copies (see #16).
+    ///
+    /// # Errors
+    /// Returns an error if no `CodeRunner` is registered for `lang_key`, or
+    /// if the registered runner's own call fails.
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_code_runner(
+        &self,
+        identifier: &str,
+        service_name: &str,
+        operation_name: &str,
+        lang_key: &str,
+        source_code: &str,
+        params: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        let code_runner = self.code_runners.get(lang_key).ok_or_else(|| {
+            error::ExecutionEngine::NotFound(format!("Code runner not found for {lang_key}"))
+        })?;
+
+        self.log(identifier, "SIMPLE_CODE", "STARTED")?;
+        let result = code_runner.run(service_name, operation_name, source_code, params, context)?;
+        self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
+
+        Ok(result)
     }
 
     /// Queues a timestamped `(action_type) [status] id` line to the shared
@@ -642,7 +635,7 @@ mod tests {
         let (writer, handle) =
             common_data_structures::log_writer::LogWriter::spawn(file.try_clone().unwrap());
 
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(FakeLookup));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, writer.clone());
 
         engine.log("svc.op", "ACTION", "STARTED").unwrap();
@@ -720,10 +713,48 @@ mod tests {
         writer
     }
 
+    /// Builds a [`VersionedServiceTree`] wrapping a single `SimpleCode`
+    /// manifest in `language`.
+    fn simple_code_service(
+        language: core_entities::service::code_resource::Language,
+    ) -> core_entities::service::VersionedServiceTree {
+        let mut code = core_entities::service::CodeResource::new();
+        code.set_codeString("return 1".to_owned());
+        code.language = protobuf::EnumOrUnknown::new(language);
+
+        let mut simple_code = core_entities::service::SimpleCodeService::new();
+        simple_code.code = protobuf::MessageField::some(code);
+
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().set_simpleCode(simple_code);
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree
+    }
+
+    #[test]
+    fn run_reports_the_correct_language_when_no_javascript_code_runner_is_registered() {
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(
+            simple_code_service(core_entities::service::code_resource::Language::JAVASCRIPT),
+        ));
+        let engine = Engine::new(lookup, test_logger());
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine.run("svc.execute", Value::Null, Value::Null, &ctx);
+
+        let err = result.expect_err("expected an error since no js runner is registered");
+        assert_eq!(
+            err.to_string(),
+            "Not found: Code runner not found for js",
+            "the JAVASCRIPT branch's error message previously wrongly said 'python' - #16"
+        );
+    }
+
     #[tokio::test]
     async fn run_workflow_dispatches_to_the_registered_workflow_runner() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(workflow_service("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -755,8 +786,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_workflow_errors_when_no_workflow_runner_is_registered() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(workflow_service("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -775,8 +806,7 @@ mod tests {
         let mut tree = core_entities::service::VersionedServiceTree::new();
         tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
 
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(tree)));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let mut engine = Engine::new(lookup, test_logger());
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         engine.register_workflow_runner(Arc::new(FakeWorkflowRunner {
@@ -798,8 +828,8 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_true_for_a_workflow_manifest() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(workflow_service("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -814,8 +844,7 @@ mod tests {
         let mut tree = core_entities::service::VersionedServiceTree::new();
         tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
 
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(tree)));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -825,7 +854,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_false_when_the_service_is_not_found() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(FakeLookup));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -835,7 +864,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_false_for_an_unparseable_identifier() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> = Arc::new(Mutex::new(FakeLookup));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -881,8 +910,8 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_returns_owned_pieces_for_a_swagger_manifest() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(swagger_service())));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(swagger_service()));
         let mut engine = Engine::new(lookup, test_logger());
 
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -905,8 +934,8 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_errors_when_no_async_connector_is_registered() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(swagger_service())));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(swagger_service()));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -921,8 +950,8 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_errors_when_the_manifest_is_not_swagger() {
-        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
-            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+            Arc::new(WorkflowLookup(workflow_service("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

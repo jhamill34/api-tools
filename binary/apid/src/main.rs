@@ -494,6 +494,28 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
+/// Adapts a shared, mutably-locked [`OperationRepos`] (also written to by
+/// the background loader - see [`workers::start_background_watcher`]) to
+/// [`EngineLookup`]'s read-only, unlocked contract, encapsulating the lock
+/// so [`execution_engine::Engine`] itself never has to know one exists.
+struct LockedLookup(Arc<Mutex<OperationRepos>>);
+
+impl EngineLookup for LockedLookup {
+    fn get_service(&self, id: &str) -> Option<VersionedServiceTree> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_service(id)
+    }
+
+    fn get_credentials(&self, id: &str) -> Option<Authentication> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_credentials(id)
+    }
+}
+
 /// Builds an [`execution_engine::Engine`] backed by `lookup`, and registers
 /// every adapter enabled by this build's Cargo features (the API-call
 /// connector is always registered; Python/JavaScript/Lua code runners,
@@ -506,7 +528,7 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 /// down from an already-running async context) — callers on the async
 /// main thread must invoke this through `tokio::task::spawn_blocking`.
 fn construct_execution_engine(
-    lookup: Arc<Mutex<dyn EngineLookup + Sync + Send>>,
+    lookup: Arc<dyn EngineLookup + Sync + Send>,
     signals: Signals,
     workflow_path: &str,
     api_path: &str,
@@ -644,12 +666,13 @@ async fn main() -> anyhow::Result<()> {
 
     let engine = {
         let repos = Arc::<Mutex<in_memory_storage::OperationRepos>>::clone(&repos);
+        let lookup: Arc<dyn EngineLookup + Sync + Send> = Arc::new(LockedLookup(repos));
         let signals = Arc::clone(&signals);
         let workflow_path = config.log.workflow_path.clone();
         let api_path = config.log.api_path.clone();
 
         tokio::task::spawn_blocking(move || {
-            construct_execution_engine(repos, signals, &workflow_path, &api_path)
+            construct_execution_engine(lookup, signals, &workflow_path, &api_path)
         })
         .await??
     };
@@ -703,7 +726,7 @@ mod tests {
             Box::new(InMemoryRepository::new()),
             Box::new(InMemoryRepository::new()),
         );
-        let repos: Arc<Mutex<dyn EngineLookup + Sync + Send>> = Arc::new(Mutex::new(repos));
+        let repos: Arc<dyn EngineLookup + Sync + Send> = Arc::new(repos);
         let signals: Signals = Arc::new(Mutex::new(HashMap::new()));
 
         let log_dir = tempfile::tempdir().unwrap();
