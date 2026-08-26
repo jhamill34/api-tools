@@ -696,6 +696,7 @@ name = "execution_engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "common_data_structures",
  "core_entities",
@@ -704,6 +705,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

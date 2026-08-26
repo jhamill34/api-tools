@@ -3,6 +3,7 @@
 
 use core_entities::service::{
     APIWrappedService, CommonApi, ScriptedAction, SwaggerService, VersionedServiceTree,
+    WorkflowService,
 };
 use credential_entities::credentials::Authentication;
 use serde_json::Value;
@@ -116,6 +117,35 @@ pub trait FilteredRunner {
         name: &str,
         operation_name: &str,
         manifest: &APIWrappedService,
+        params: Value,
+        ctx: &EngineInputContext,
+    ) -> error::Result<Value>;
+}
+
+/// An output port that executes a `Workflow` operation's Lua source in an
+/// async-native, coroutine-based engine (see `prototypes/workflow_engine`).
+///
+/// Unlike every other output port in this module, this one is genuinely
+/// async - and deliberately not dispatched to by the synchronous
+/// [`Engine::run`](crate::Engine::run) at all. `Engine::run` and every
+/// other `*Runner` trait here does blocking work; calling this from inside
+/// that synchronous call chain would mean either blocking an async
+/// executor thread for the call's duration (if called from async code) or
+/// defeating this engine's entire concurrency model by `block_on`-ing it
+/// (if called from `Engine::run`'s sync call chain). It's reached only via
+/// [`Engine::run_workflow`](crate::Engine::run_workflow), a separate async
+/// entry point a caller `.await`s directly on the async runtime, never
+/// through `spawn_blocking`.
+#[async_trait::async_trait]
+pub trait WorkflowRunner: Send + Sync {
+    /// Executes `manifest`'s Lua source with `params`, applying its own
+    /// `timeoutSeconds`/`memoryLimitBytes` budget.
+    ///
+    /// # Errors
+    async fn run(
+        &self,
+        name: &str,
+        manifest: &WorkflowService,
         params: Value,
         ctx: &EngineInputContext,
     ) -> error::Result<Value>;

@@ -32,7 +32,7 @@ use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
 use services::{
     CodeRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext, EngineLookup,
-    FilteredRunner, InputPrompter, ScriptRunner,
+    FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
 };
 use std::{collections::HashMap, sync::Mutex};
 
@@ -65,6 +65,11 @@ pub struct Engine {
 
     /// Handles the built-in `$input` operation, if registered.
     input_handler: Option<Box<dyn InputPrompter + Send + Sync>>,
+
+    /// Handles `Workflow` operations, if registered. Dispatched to only by
+    /// [`Engine::run_workflow`], never by the synchronous [`Engine::run`] -
+    /// see [`WorkflowRunner`]'s docs for why.
+    workflow_runner: Option<Box<dyn WorkflowRunner>>,
 }
 
 impl Engine {
@@ -80,6 +85,7 @@ impl Engine {
             script_runner: None,
             filtered_runner: None,
             input_handler: None,
+            workflow_runner: None,
         }
     }
 
@@ -112,6 +118,12 @@ impl Engine {
     #[inline]
     pub fn register_input(&mut self, handler: Box<dyn InputPrompter + Send + Sync>) {
         self.input_handler = Some(handler);
+    }
+
+    /// Registers the [`WorkflowRunner`].
+    #[inline]
+    pub fn register_workflow_runner(&mut self, runner: Box<dyn WorkflowRunner>) {
+        self.workflow_runner = Some(runner);
     }
 
     /// Splits a `service.operation` identifier into its two parts, resolving
@@ -344,6 +356,70 @@ impl Engine {
         }
     }
 
+    /// Resolves `identifier` and dispatches to the registered
+    /// [`WorkflowRunner`], for `Workflow`-kind manifests only.
+    ///
+    /// A separate, genuinely async entry point from [`Engine::run`] -
+    /// callers `.await` this directly on the async runtime, never through
+    /// `spawn_blocking`, since the whole point of a [`WorkflowRunner`] is
+    /// not blocking a thread while its steps run concurrently. See
+    /// [`WorkflowRunner`]'s docs for the full reasoning.
+    ///
+    /// # Errors
+    /// Returns an error if the identifier can't be parsed, the service
+    /// isn't found, the manifest isn't a `Workflow`, or no
+    /// [`WorkflowRunner`] is registered.
+    pub async fn run_workflow(
+        &self,
+        identifier: &str,
+        params: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        let (service_name, operation_name) =
+            Self::parse_identifier(identifier, context.parent.as_deref())?;
+
+        let service = {
+            let lookup = self
+                .lookup
+                .lock()
+                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
+            lookup
+                .get_service(service_name)
+                .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?
+        };
+        let service = service.v1();
+        let manifest = service.manifest.v2();
+
+        let result = match &manifest.value {
+            &Some(service_manifest_latest::Value::Workflow(ref workflow)) => {
+                if let &Some(ref workflow_runner) = &self.workflow_runner {
+                    self.log(identifier, "WORKFLOW", "STARTED")?;
+                    let result = workflow_runner
+                        .run(operation_name, workflow, params, context)
+                        .await?;
+                    self.log(identifier, "WORKFLOW", "COMPLETED")?;
+
+                    Ok(result)
+                } else {
+                    Err(error::ExecutionEngine::NotFound(
+                        "Workflow runner not registered".into(),
+                    ))
+                }
+            }
+            _ => Err(error::ExecutionEngine::Unimplemented(
+                "run_workflow called on a non-Workflow manifest".into(),
+            )),
+        }?;
+
+        if context.raw_response {
+            Ok(result)
+        } else if let Value::Array(_) = result {
+            Ok(result)
+        } else {
+            Ok(Value::Array(vec![result]))
+        }
+    }
+
     /// Queues a timestamped `(action_type) [status] id` line to the shared
     /// log writer.
     fn log(&self, id: &str, action_type: &str, status: &str) -> error::Result<()> {
@@ -430,6 +506,129 @@ mod tests {
         assert!(
             contents.contains("(ACTION) [STARTED] svc.op"),
             "expected the log line in {contents:?}"
+        );
+    }
+
+    /// Builds a [`VersionedServiceTree`] wrapping a single `Workflow`
+    /// manifest with `code` as its Lua source.
+    fn workflow_service(code: &str) -> core_entities::service::VersionedServiceTree {
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest
+            .mut_v2()
+            .mut_workflow()
+            .set_codeString(code.to_owned());
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree
+    }
+
+    struct WorkflowLookup(core_entities::service::VersionedServiceTree);
+
+    impl EngineLookup for WorkflowLookup {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+            Some(self.0.clone())
+        }
+
+        fn get_credentials(
+            &self,
+            _id: &str,
+        ) -> Option<credential_entities::credentials::Authentication> {
+            None
+        }
+    }
+
+    struct FakeWorkflowRunner {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkflowRunner for FakeWorkflowRunner {
+        async fn run(
+            &self,
+            _name: &str,
+            manifest: &core_entities::service::WorkflowService,
+            _params: Value,
+            _ctx: &EngineInputContext,
+        ) -> error::Result<Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(manifest.codeString().to_owned());
+            Ok(Value::String("workflow ran".into()))
+        }
+    }
+
+    fn test_logger() -> LogWriter {
+        let file = tempfile::tempfile().unwrap();
+        let (writer, _handle) = LogWriter::spawn(file);
+        writer
+    }
+
+    #[tokio::test]
+    async fn run_workflow_dispatches_to_the_registered_workflow_runner() {
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let mut engine = Engine::new(lookup, test_logger());
+
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        engine.register_workflow_runner(Box::new(FakeWorkflowRunner {
+            calls: std::sync::Arc::clone(&calls),
+        }));
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine
+            .run_workflow("svc.execute", Value::Null, &ctx)
+            .await
+            .expect("run_workflow should succeed");
+
+        assert_eq!(
+            result,
+            Value::Array(vec![Value::String("workflow ran".into())])
+        );
+        assert_eq!(calls.lock().unwrap().as_slice(), ["return 42"]);
+    }
+
+    #[tokio::test]
+    async fn run_workflow_errors_when_no_workflow_runner_is_registered() {
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let engine = Engine::new(lookup, test_logger());
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine.run_workflow("svc.execute", Value::Null, &ctx).await;
+
+        assert!(
+            matches!(result, Err(error::ExecutionEngine::NotFound(_))),
+            "expected NotFound, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_workflow_errors_when_the_manifest_is_not_a_workflow() {
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().mut_swagger();
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(tree)));
+        let mut engine = Engine::new(lookup, test_logger());
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        engine.register_workflow_runner(Box::new(FakeWorkflowRunner {
+            calls: Arc::clone(&calls),
+        }));
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine.run_workflow("svc.execute", Value::Null, &ctx).await;
+
+        assert!(
+            matches!(result, Err(error::ExecutionEngine::Unimplemented(_))),
+            "expected Unimplemented, got {result:?}"
+        );
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "the workflow runner should never have been called for a non-Workflow manifest"
         );
     }
 }
