@@ -32,11 +32,6 @@ pub enum ExecutionEngine {
         source: io::Error,
     },
 
-    /// The shared lookup's lock was poisoned by a panic in another thread
-    /// while holding it.
-    #[error("Get out of here! The Lock is poisoned: {0}")]
-    PoisonedLock(String),
-
     /// TODO: Rename to OutputPort
     #[error(transparent)]
     Other {
