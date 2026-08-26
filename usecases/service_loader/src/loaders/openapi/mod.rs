@@ -74,6 +74,19 @@ fn get_server(server: &serde_json::Value) -> error::Result<String> {
     required_field(server, "url")
 }
 
+/// The `OpenAPI` path-item verbs [`collect_operations`] recognizes, paired
+/// with the [`service::operation::HttpMethodType`] each one maps to.
+const HTTP_METHODS: &[(&str, service::operation::HttpMethodType)] = &[
+    ("get", service::operation::HttpMethodType::GET),
+    ("post", service::operation::HttpMethodType::POST),
+    ("put", service::operation::HttpMethodType::PUT),
+    ("patch", service::operation::HttpMethodType::PATCH),
+    ("delete", service::operation::HttpMethodType::DELETE),
+    ("head", service::operation::HttpMethodType::HEAD),
+    ("options", service::operation::HttpMethodType::OPTIONS),
+    ("trace", service::operation::HttpMethodType::TRACE),
+];
+
 /// Resolves `item` (a path item, possibly a `$ref`) and converts each
 /// HTTP-verb entry it defines (get/post/put/patch/delete/head/options/
 /// trace) into an `(operationId, Operation)` pair via [`handle_operation`],
@@ -99,132 +112,22 @@ fn collect_operations<R: io::Read>(
 
     let mut result = Vec::new();
 
-    if let Some(op) = item.get("get") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::GET.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("post") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::POST.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("put") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::PUT.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("patch") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::PATCH.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("delete") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::DELETE.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("head") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::HEAD.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("options") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::OPTIONS.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
-    }
-
-    if let Some(op) = item.get("trace") {
-        let mut common_op = service::Operation::new();
-        common_op.path = path.to_owned();
-        common_op.method = service::operation::HttpMethodType::TRACE.into();
-        handle_operation(
-            op,
-            &mut common_op,
-            root,
-            fetcher,
-            cache,
-            schemas,
-            &common_params,
-        )?;
-        result.push((required_field(op, "operationId")?, common_op));
+    for &(verb, method) in HTTP_METHODS {
+        if let Some(op) = item.get(verb) {
+            let mut common_op = service::Operation::new();
+            common_op.path = path.to_owned();
+            common_op.method = method.into();
+            handle_operation(
+                op,
+                &mut common_op,
+                root,
+                fetcher,
+                cache,
+                schemas,
+                &common_params,
+            )?;
+            result.push((required_field(op, "operationId")?, common_op));
+        }
     }
 
     Ok(result)
