@@ -1,20 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-    // clippy::shadow_unrelated,
-    // clippy::too_many_lines
-    clippy::question_mark_used,
-    clippy::needless_borrowed_reference,
-    clippy::absolute_paths,
-    clippy::ref_patterns,
-    clippy::single_call_fn
-)]
-
 //! Serializes an internal [`VersionedServiceTree`]/[`Authentication`] pair
 //! back out to OpenAPI-shaped JSON/YAML and credential JSON, the inverse of
 //! `service_loader`'s `OpenAPI` loader.
@@ -330,8 +313,8 @@ fn handle_parameter(
 ) -> error::Result<()> {
     // TODO: extract into a referece based on a flag
 
-    let in_type = source.in_.enum_value().map_err(|_| {
-        error::ServiceWriter::Unimplemented("Unrecognized parameter location".into())
+    let in_type = source.in_.enum_value().map_err(|raw| {
+        error::ServiceWriter::Unimplemented(format!("Unrecognized parameter location: {raw}"))
     })?;
     sink.insert(
         "in".into(),

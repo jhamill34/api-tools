@@ -1,18 +1,15 @@
 //! The background thread that polls loaded services' directories for
 //! filesystem changes and reports them to [`super::loader`].
 
-extern crate alloc;
-use alloc::sync::Arc;
-
-use core::time::Duration;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         mpsc::{self, Receiver, Sender},
-        Mutex, PoisonError,
+        Arc, Mutex, PoisonError,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use notify::Watcher;

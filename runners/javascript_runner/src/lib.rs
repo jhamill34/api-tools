@@ -1,23 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::match_ref_pats,
-    clippy::separated_literal_suffix,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::question_mark_used,
-    clippy::needless_borrowed_reference,
-    clippy::single_call_fn,
-    clippy::absolute_paths,
-)]
-
 //! A [`CodeRunner`] adapter that executes a JavaScript operation body
 //! inside a [`MiniV8`] interpreter reused per thread.
 
@@ -26,11 +6,12 @@ mod constants;
 mod converters;
 pub mod error;
 
-extern crate alloc;
-use alloc::sync::Arc;
 use mini_v8::MiniV8;
 
-use std::{cell::RefCell, sync::RwLock};
+use std::{
+    cell::RefCell,
+    sync::{Arc, RwLock},
+};
 
 use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;

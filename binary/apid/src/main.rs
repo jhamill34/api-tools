@@ -1,22 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-    clippy::shadow_unrelated,
-    clippy::shadow_same,
-    // clippy::too_many_lines
-    clippy::question_mark_used,
-    clippy::absolute_paths,
-    clippy::single_call_fn,
-    clippy::ref_patterns,
-
-    clippy::min_ident_chars,
-)]
-
 //! The daemon binary: a `tonic` gRPC server that wires concrete adapters
 //! into an [`execution_engine::Engine`] and exposes it as the [`Engine`]
 //! service, the composition root of the whole workspace.
@@ -26,8 +7,6 @@ mod constants;
 mod util;
 mod workers;
 
-extern crate alloc;
-use alloc::sync::Arc;
 use config::Configuration;
 
 use std::{
@@ -36,7 +15,7 @@ use std::{
     fs::{self, File},
     panic,
     path::PathBuf,
-    sync::{mpsc::Sender, Mutex, PoisonError, RwLock},
+    sync::{mpsc::Sender, Arc, Mutex, PoisonError, RwLock},
 };
 
 use anyhow::{anyhow, Context};

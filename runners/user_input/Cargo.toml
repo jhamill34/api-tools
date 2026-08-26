@@ -11,3 +11,6 @@ serde_json = { workspace = true }
 execution_engine = { path = "../../usecases/execution_engine" }
 
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

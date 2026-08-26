@@ -39,6 +39,45 @@ members = [
 	"prototypes/workflow_engine",
 ]
 
+[workspace.lints.clippy]
+# Curated per issue #1, replacing the former per-crate blanket
+# `#![warn(clippy::restriction, clippy::pedantic)]`. `restriction` is not
+# meant to be enabled wholesale (clippy's own docs say so — it contains
+# mutually contradictory lints); each restriction-tier lint below was
+# reviewed individually and either enabled or explicitly rejected with a
+# reason. `pedantic` stays fully enabled.
+pedantic = { level = "warn", priority = -1 }
+
+# Restriction-tier lints deliberately kept on:
+ref_patterns = "warn"
+map_err_ignore = "warn"
+allow_attributes_without_reason = "warn"
+
+# Not restriction-tier, but were being suppressed anyway (default-on via
+# clippy::all / clippy::pedantic) — explicitly un-suppressing:
+too_many_lines = "warn"
+match_ref_pats = "warn"
+needless_borrowed_reference = "warn"
+
+# Restriction-tier lints reviewed and deliberately left off:
+implicit_return = "allow" # bans expression-as-return-value, Rust's core idiom
+question_mark_used = "allow" # fires on every `?`; universally not recommended to enable
+shadow_reuse = "allow" # this codebase's dominant "transform in place" style
+shadow_unrelated = "allow" # same family as shadow_reuse
+shadow_same = "allow" # same family
+single_call_fn = "allow" # named single-call helpers are a deliberate readability tool here
+absolute_paths = "allow" # error.rs files intentionally fully-qualify wrapped error types
+mod_module_files = "allow" # codebase's actual, consistent convention (mod.rs for nested modules)
+self_named_module_files = "allow" # mutually exclusive with the above; moot either way
+min_ident_chars = "allow" # short loop/index identifiers are fine
+separated_literal_suffix = "allow" # pure style preference, no correctness value
+std_instead_of_core = "allow" # no crate in this workspace is #![no_std]; inapplicable
+std_instead_of_alloc = "allow" # same
+arbitrary_source_item_ordering = "allow" # would force alphabetical ordering over the
+# codebase's logical grouping (constructors before accessors, related
+# methods together) for no readability gain — reviewed and rejected
+doc_paragraphs_missing_punctuation = "allow" # low-signal nitpick, not worth the churn
+
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"

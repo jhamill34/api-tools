@@ -1,5 +1,3 @@
-#![allow(clippy::separated_literal_suffix)]
-
 //! Generates a sample JSON input/output payload for an operation, used by
 //! the `InputStub`/`OutputStub` CLI commands.
 

@@ -1,13 +1,12 @@
-#![allow(clippy::print_stdout)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::needless_borrowed_reference)]
+#![allow(
+    clippy::print_stdout,
+    reason = "this CLI's actual output mechanism for command results"
+)]
 
 //! Handlers for every CLI subcommand: the gRPC client calls to `apid`
 //! ([`Cli`]), the local JSON-schema inference/merge helpers, and the
 //! `generate` command's template rendering.
 
-extern crate alloc;
-use alloc::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tera::{Context, Tera};
 
@@ -15,7 +14,7 @@ use std::{
     collections::HashMap,
     env, fs, io,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, Context as _};

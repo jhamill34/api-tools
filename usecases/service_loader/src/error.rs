@@ -1,5 +1,3 @@
-#![allow(clippy::std_instead_of_core)]
-
 //! Errors produced while loading a service, its credentials, or its
 //! override configuration.
 

@@ -1,25 +1,9 @@
-#![warn(clippy::restriction, clippy::pedantic)]
 #![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::match_ref_pats,
-    clippy::separated_literal_suffix,
-
     clippy::as_conversions,
     clippy::cast_possible_truncation,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::needless_borrowed_reference,
-    clippy::separated_literal_suffix,
-    clippy::question_mark_used,
-    clippy::absolute_paths,
-    clippy::ref_patterns,
+    reason = "pagination limit/offset casts between i32/usize/u64 are unaudited; \
+              tracked as a dedicated numeric-safety follow-up to issue #1, not \
+              rushed into this lint-hygiene pass"
 )]
 
 //! A [`DataConnectionRunner`] adapter that resolves an operation's request
@@ -28,8 +12,6 @@
 
 mod constants;
 pub mod error;
-
-extern crate alloc;
 
 use std::collections::HashMap;
 
@@ -492,10 +474,9 @@ impl APICallState {
         creds: Option<&Authentication>,
     ) -> error::Result<()> {
         let defined_auth = &manifest.auth;
-        let auth_type = defined_auth
-            .type_
-            .enum_value()
-            .map_err(|_| error::APICaller::Unimplemented("Unrecognized auth type".into()))?;
+        let auth_type = defined_auth.type_.enum_value().map_err(|raw| {
+            error::APICaller::Unimplemented(format!("Unrecognized auth type: {raw}"))
+        })?;
         match auth_type {
             core_entities::service::swagger_service::service_auth::Type::HEADER => {
                 let key = defined_auth
@@ -1102,11 +1083,13 @@ impl AsyncDataConnectionRunner for AsyncAPICaller {
 
 #[cfg(test)]
 mod tests {
-    use alloc::sync::Arc;
     use std::{
         io::{BufRead, BufReader, Write},
         net::TcpListener,
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
         thread,
     };
 

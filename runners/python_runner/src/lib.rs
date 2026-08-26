@@ -1,23 +1,3 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::match_ref_pats,
-    clippy::separated_literal_suffix,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::question_mark_used,
-    clippy::single_call_fn,
-    clippy::absolute_paths,
-    clippy::min_ident_chars
-)]
-
 //! A [`CodeRunner`] adapter that executes a Python operation body in an
 //! embedded `CPython` interpreter, exposing `api`/`workflow`/`action`/`task`
 //! bindings the script can use to interact with the engine.
@@ -27,10 +7,7 @@ mod constants;
 mod converters;
 pub mod error;
 
-extern crate alloc;
-use alloc::sync::Arc;
-
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;

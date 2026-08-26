@@ -27,3 +27,6 @@ async-trait = { workspace = true }
 tempfile = "3"
 protobuf = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

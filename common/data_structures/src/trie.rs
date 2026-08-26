@@ -1,4 +1,7 @@
-#![allow(clippy::arithmetic_side_effects)]
+#![allow(
+    clippy::arithmetic_side_effects,
+    reason = "byte-index arithmetic for wildcard matching, bounds-checked by the slice ops around it"
+)]
 
 //! A byte-wise trie for wildcard-aware string-key lookups — e.g. matching a
 //! concrete key like `"application/json"` against a registered pattern like

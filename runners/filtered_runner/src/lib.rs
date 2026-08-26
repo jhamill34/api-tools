@@ -1,37 +1,16 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::shadow_unrelated,
-    clippy::match_ref_pats,
-    clippy::separated_literal_suffix,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::question_mark_used,
-    clippy::needless_borrowed_reference,
-
-    clippy::absolute_paths,
-    clippy::single_call_fn,
-    clippy::ref_patterns,
-)]
-
 //! A [`FilteredRunner`] adapter that calls another already-registered
 //! operation through the [`execution_engine`] and narrows its result down to
 //! a specific set of selected output fields.
 
 pub mod error;
 
-extern crate alloc;
-use alloc::{rc::Rc, sync::Arc};
+use std::{
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
 use common_data_structures::log_writer::LogWriter;
 use lazy_static::lazy_static;
-use std::sync::RwLock;
 
 use execution_engine::services::FilteredRunner;
 use regex::Regex;

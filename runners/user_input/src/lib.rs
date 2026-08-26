@@ -1,38 +1,15 @@
-#![warn(clippy::restriction, clippy::pedantic)]
-#![allow(
-    clippy::blanket_clippy_restriction_lints,
-    clippy::mod_module_files,
-    clippy::self_named_module_files,
-
-    clippy::implicit_return,
-    clippy::shadow_reuse,
-    clippy::match_ref_pats,
-
-    // Would like to turn on (Configured to 50?)
-    clippy::too_many_lines,
-    clippy::question_mark_used,
-    clippy::needless_borrowed_reference,
-    clippy::absolute_paths,
-    clippy::ref_patterns,
-    clippy::single_call_fn,
-    clippy::min_ident_chars,
-)]
-
 //! An [`InputPrompter`] adapter that pauses a running workflow and waits for
 //! an external caller to supply the answer.
 
 pub mod error;
 
-extern crate alloc;
-use alloc::sync::Arc;
-use core::time::Duration;
-
 use std::{
     collections::HashMap,
     sync::{
         mpsc::{self, Sender},
-        Mutex,
+        Arc, Mutex,
     },
+    time::Duration,
 };
 
 use execution_engine::services::InputPrompter;

@@ -1,16 +1,10 @@
-#![allow(clippy::std_instead_of_core)]
-
 //! `pyo3` classes installed into a running script's module namespace as the
 //! `api`/`workflow`/`action`/`task` bindings, giving the script a way to
 //! call back into the engine and to log activity.
 
-extern crate alloc;
-use alloc::sync::Arc;
-
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::thread;
-
-use core::time::Duration;
+use std::time::Duration;
 
 use common_data_structures::log_writer::LogWriter;
 
@@ -327,7 +321,10 @@ impl WorkflowLogger {
 
     /// Logs `display` at [`constants::LOG_STATUS`], tagged with
     /// `groupId`, without affecting the script's recorded outcome.
-    #[allow(non_snake_case)]
+    #[allow(
+        non_snake_case,
+        reason = "groupId matches the script-facing binding's parameter name"
+    )]
     fn status(&mut self, py: Python<'_>, display: &PyAny, groupId: &str) -> PyResult<Py<PyAny>> {
         self.print_display(display, &format!("{}={groupId}", constants::LOG_STATUS))?;
         Ok(py.None())

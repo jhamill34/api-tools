@@ -1,5 +1,3 @@
-#![allow(clippy::std_instead_of_core)]
-
 //! Errors produced while waiting on a [`UserInput`](crate::UserInput)
 //! prompt.
 
