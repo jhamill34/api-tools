@@ -42,19 +42,29 @@
 //! `Lua` - it only sends a request and awaits the reply - so its future
 //! really is `Send`, satisfying [`WorkflowRunner`]'s bound.
 //!
-//! Every workflow run also gets an `api.run(id, params, options)` binding
-//! (installed fresh per call, alongside `api.step`/`api.join`), mirroring
-//! `lua_runner`'s binding of the same name: it lets a workflow script
-//! synchronously invoke an existing `SimpleCode`/`Action`/`Swagger`/etc.
-//! operation. Unlike `lua_runner`, which calls `engine.run(...)` inline
-//! (safe there because `lua_runner` itself is only ever reached via
-//! `spawn_blocking`), this binding runs on the workflow-dispatch thread's
-//! async runtime, so it bridges into the blocking `Engine::run` call via
-//! its own `tokio::task::spawn_blocking(...).await` - the same class of
-//! bridge #74 called out as necessary, and (per #74's own note) an easier
-//! one to get right than a pure Lua-to-Lua step: the `spawn_blocking`
-//! closure only touches `Arc<RwLock<Engine>>`/owned JSON, no Lua state, so
-//! it really is `Send + 'static`.
+//! Every workflow run also gets two host bindings installed fresh per call,
+//! alongside `api.step`/`api.join`:
+//!
+//! - `api.run(id, params, options)`, mirroring `lua_runner`'s binding of
+//!   the same name: it lets a workflow script synchronously invoke an
+//!   existing `SimpleCode`/`Action`/`Swagger`/etc. operation, of *any*
+//!   manifest kind. Unlike `lua_runner`, which calls `engine.run(...)`
+//!   inline (safe there because `lua_runner` itself is only ever reached
+//!   via `spawn_blocking`), this binding runs on the workflow-dispatch
+//!   thread's async runtime, so it bridges into the blocking `Engine::run`
+//!   call via its own `tokio::task::spawn_blocking(...).await` - the same
+//!   class of bridge #74 called out as necessary, and (per #74's own note)
+//!   an easier one to get right than a pure Lua-to-Lua step: the
+//!   `spawn_blocking` closure only touches `Arc<RwLock<Engine>>`/owned
+//!   JSON, no Lua state, so it really is `Send + 'static`.
+//! - `api.call(id, params, options)` (#75): the genuinely async sibling,
+//!   for `Swagger`-kind manifests only. Dispatches directly through the
+//!   registered `AsyncDataConnectionRunner` (e.g. `api_caller::AsyncAPICaller`)
+//!   with no `spawn_blocking` bridge at all - a real async HTTP client has
+//!   no thread-affine state to protect, so the call just `.await`s
+//!   in-place. Errors instead of falling back to `api.run` for any other
+//!   manifest kind, so a script author's choice between the two bindings
+//!   is explicit rather than silently downgraded.
 
 use std::{
     sync::{Arc, PoisonError, RwLock},
@@ -64,7 +74,7 @@ use std::{
 use core_entities::service::WorkflowService as WorkflowManifest;
 use execution_engine::{
     error::ExecutionEngine,
-    services::{EngineInputContext, WorkflowRunner},
+    services::{DataConnectorBundle, EngineInputContext, WorkflowRunner},
 };
 use mlua::LuaSerdeExt;
 use serde_json::Value;
@@ -176,8 +186,18 @@ async fn run_one_workflow(
         &workflow_engine,
         request.service_name.clone(),
         request.execution_id.clone(),
-        engine,
+        Arc::clone(&engine),
         logger,
+    )
+    .map_err(|err| ExecutionEngine::Other {
+        source: anyhow::Error::from(err),
+    })?;
+
+    install_api_call_binding(
+        &workflow_engine,
+        request.service_name.clone(),
+        request.execution_id.clone(),
+        engine,
     )
     .map_err(|err| ExecutionEngine::Other {
         source: anyhow::Error::from(err),
@@ -235,6 +255,64 @@ fn install_api_run_binding(
             .await
             .map_err(|join_err| mlua::Error::ExternalError(Arc::new(join_err)))?
             .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
+
+            lua.to_value(&result)
+        }
+    })
+}
+
+/// Installs `api.call(id, params, options)` on `workflow_engine`, dispatching
+/// through `engine`'s registered [`AsyncDataConnectionRunner`](execution_engine::services::AsyncDataConnectionRunner)
+/// (as a nested call from `service_name`'s running script within
+/// `execution_id`) directly on the workflow-dispatch thread's own async
+/// runtime - no `spawn_blocking` bridge needed here, unlike `api.run`,
+/// since a real async HTTP client has no thread-affine state to protect.
+/// Only resolves `Swagger`-kind manifests; anything else (or no async
+/// connector registered) errors instead of silently falling back to
+/// `api.run`'s behavior, so a script author's choice between the two
+/// bindings is explicit.
+fn install_api_call_binding(
+    workflow_engine: &workflow_engine::WorkflowEngine,
+    service_name: String,
+    execution_id: String,
+    engine: Arc<RwLock<execution_engine::Engine>>,
+) -> workflow_engine::error::Result<()> {
+    workflow_engine.register_api_function("call", move |lua, args: mlua::MultiValue| {
+        let engine = Arc::clone(&engine);
+        let service_name = service_name.clone();
+        let execution_id = execution_id.clone();
+
+        async move {
+            let (id, params, options): (String, mlua::Value, Option<mlua::Value>) =
+                mlua::FromLuaMulti::from_lua_multi(args, lua)?;
+
+            let params: serde_json::Value = lua.from_value(params)?;
+            let options: serde_json::Value = options
+                .map(|value| lua.from_value(value))
+                .transpose()?
+                .unwrap_or(serde_json::Value::Null);
+
+            let context =
+                EngineInputContext::new(Some(service_name.clone()), execution_id.clone(), false);
+
+            let (resolved_service, operation_name, manifest, api, creds, connector) = {
+                let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
+                engine.resolve_data_connector(&id, &context)
+            }
+            .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
+
+            let bundle = DataConnectorBundle::new(&manifest, &api, creds.as_ref());
+            let result = connector
+                .run(
+                    &resolved_service,
+                    &operation_name,
+                    &bundle,
+                    params,
+                    options,
+                    &context,
+                )
+                .await
+                .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
 
             lua.to_value(&result)
         }
@@ -404,6 +482,123 @@ mod tests {
         let mut tree = core_entities::service::VersionedServiceTree::new();
         tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
         tree
+    }
+
+    /// A `VersionedServiceTree` wrapping a single `Swagger` manifest with
+    /// an empty `CommonApi` - what `api.call` inside a workflow script
+    /// needs to find via `Engine::resolve_data_connector` for a nested
+    /// call to actually resolve.
+    fn swagger_service() -> core_entities::service::VersionedServiceTree {
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().mut_swagger();
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree.mut_v1().commonApi =
+            protobuf::MessageField::some(core_entities::service::CommonApi::new());
+        tree
+    }
+
+    struct FakeAsyncDataConnectionRunner {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl execution_engine::services::AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
+        async fn run(
+            &self,
+            name: &str,
+            operation_name: &str,
+            _bundle: &DataConnectorBundle,
+            params: serde_json::Value,
+            _options: serde_json::Value,
+            _ctx: &EngineInputContext,
+        ) -> execution_engine::error::Result<serde_json::Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((name.to_owned(), operation_name.to_owned()));
+            Ok(params)
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_adapter_api_call_bridges_into_the_registered_async_connector() {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(SingleServiceLookup(swagger_service())));
+        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
+            lookup,
+            logger.clone(),
+        )));
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        {
+            let mut engine = engine.write().unwrap();
+            engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+                calls: Arc::clone(&calls),
+            }));
+        }
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString("return api.call('other.op', { hello = 'world' })".to_owned());
+
+        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .await
+            .expect("workflow run should succeed");
+
+        assert_eq!(result, serde_json::json!({ "hello": "world" }));
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            [("other".to_owned(), "op".to_owned())],
+            "expected api.call to reach the fake async connector via the real Engine"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_adapter_api_call_errors_for_a_non_swagger_manifest() {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(SingleServiceLookup(lua_simple_code_service())));
+        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
+            lookup,
+            logger.clone(),
+        )));
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        {
+            let mut engine = engine.write().unwrap();
+            engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+                calls: Arc::clone(&calls),
+            }));
+        }
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString(
+            "local ok = pcall(function() return api.call('other.op', {}) end)\n\
+                              return { ok = ok }"
+                .to_owned(),
+        );
+
+        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .await
+            .expect("workflow run should succeed - the error is caught by pcall");
+
+        assert_eq!(result, serde_json::json!({ "ok": false }));
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "the fake connector should never have been called for a non-Swagger manifest"
+        );
     }
 
     #[tokio::test]
