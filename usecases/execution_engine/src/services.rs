@@ -74,12 +74,59 @@ pub struct DataConnectorBundle<'bundle> {
     pub creds: Option<&'bundle Authentication>,
 }
 
+impl<'bundle> DataConnectorBundle<'bundle> {
+    /// Creates a [`DataConnectorBundle`] from its parts. Needed because the
+    /// struct is `#[non_exhaustive]`, which blocks struct-literal
+    /// construction from outside this crate - e.g. a
+    /// [`AsyncDataConnectionRunner`] implementation's own tests, which
+    /// receive a bundle as a parameter in production but need to build one
+    /// directly to exercise the trait.
+    #[must_use]
+    #[inline]
+    pub fn new(
+        manifest: &'bundle SwaggerService,
+        api: &'bundle CommonApi,
+        creds: Option<&'bundle Authentication>,
+    ) -> Self {
+        Self {
+            manifest,
+            api,
+            creds,
+        }
+    }
+}
+
 /// An output port that executes an OpenAPI-backed (`Swagger`) operation.
 pub trait DataConnectionRunner {
     /// Executes `operation_name` against `bundle` with `params`/`options`.
     ///
     /// # Errors
     fn run(
+        &self,
+        name: &str,
+        operation_name: &str,
+        bundle: &DataConnectorBundle,
+        params: Value,
+        options: Value,
+        ctx: &EngineInputContext,
+    ) -> error::Result<Value>;
+}
+
+/// An output port that executes an OpenAPI-backed (`Swagger`) operation
+/// without blocking a thread for the call's duration - the async sibling of
+/// [`DataConnectionRunner`], for callers that already have somewhere async
+/// to run from (e.g. a `WorkflowRunner`'s Lua host bindings). Not dispatched
+/// to by the synchronous [`Engine::run`](crate::Engine::run) - reached only
+/// via [`Engine::resolve_data_connector`](crate::Engine::resolve_data_connector),
+/// the same synchronous-resolve-then-await split
+/// [`WorkflowRunner`]'s docs describe for the same `!Send`-across-a-lock
+/// reason.
+#[async_trait::async_trait]
+pub trait AsyncDataConnectionRunner: Send + Sync {
+    /// Executes `operation_name` against `bundle` with `params`/`options`.
+    ///
+    /// # Errors
+    async fn run(
         &self,
         name: &str,
         operation_name: &str,

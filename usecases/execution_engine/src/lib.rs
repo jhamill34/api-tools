@@ -31,8 +31,8 @@ use alloc::sync::Arc;
 use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
 use services::{
-    CodeRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext, EngineLookup,
-    FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
+    AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
+    EngineInputContext, EngineLookup, FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
 };
 use std::{collections::HashMap, sync::Mutex};
 
@@ -92,6 +92,13 @@ pub struct Engine {
     /// before `.await`-ing the runner - a `Box` couldn't be cloned out this
     /// way.
     workflow_runner: Option<Arc<dyn WorkflowRunner>>,
+
+    /// Handles `Swagger` operations without blocking a thread, if
+    /// registered. Dispatched to only by [`Engine::resolve_data_connector`],
+    /// never by the synchronous [`Engine::run`] - see
+    /// [`AsyncDataConnectionRunner`]'s docs for why. `Arc`, not `Box`, for
+    /// the same reason as `workflow_runner` above.
+    async_connector: Option<Arc<dyn AsyncDataConnectionRunner>>,
 }
 
 impl Engine {
@@ -108,6 +115,7 @@ impl Engine {
             filtered_runner: None,
             input_handler: None,
             workflow_runner: None,
+            async_connector: None,
         }
     }
 
@@ -146,6 +154,12 @@ impl Engine {
     #[inline]
     pub fn register_workflow_runner(&mut self, runner: Arc<dyn WorkflowRunner>) {
         self.workflow_runner = Some(runner);
+    }
+
+    /// Registers the [`AsyncDataConnectionRunner`].
+    #[inline]
+    pub fn register_async_connector(&mut self, runner: Arc<dyn AsyncDataConnectionRunner>) {
+        self.async_connector = Some(runner);
     }
 
     /// Splits a `service.operation` identifier into its two parts, resolving
@@ -506,6 +520,71 @@ impl Engine {
         )
     }
 
+    /// Resolves `identifier` against a `Swagger`-kind manifest, returning
+    /// the fully **owned** pieces (`service_name`, `operation_name`, the
+    /// manifest's cloned `SwaggerService` and `CommonApi`, cloned
+    /// credentials, and the registered [`AsyncDataConnectionRunner`] cloned
+    /// out of its `Arc`) a caller needs to run it - entirely synchronously,
+    /// with every lock this method touches dropped before it returns. Same
+    /// split, and the same reason for it, as [`Engine::resolve_workflow`]:
+    /// it lets a caller (e.g. a `WorkflowRunner`'s `api.call` binding)
+    /// `.await` the returned runner with zero `Engine`-level locks held.
+    ///
+    /// # Errors
+    /// Returns an error if the identifier can't be parsed, the service
+    /// isn't found, the manifest isn't a `Swagger` manifest, or no
+    /// [`AsyncDataConnectionRunner`] is registered.
+    #[allow(clippy::type_complexity)]
+    pub fn resolve_data_connector(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
+        Arc<dyn AsyncDataConnectionRunner>,
+    )> {
+        let (service_name, operation_name) =
+            Self::parse_identifier(identifier, context.parent.as_deref())?;
+
+        let (service, credentials) = {
+            let lookup = self
+                .lookup
+                .lock()
+                .map_err(|err| error::ExecutionEngine::PoisonedLock(err.to_string()))?;
+            let service = lookup
+                .get_service(service_name)
+                .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
+            let credentials = lookup.get_credentials(service_name);
+            (service, credentials)
+        };
+        let service = service.v1();
+        let manifest = service.manifest.v2();
+
+        match &manifest.value {
+            &Some(service_manifest_latest::Value::Swagger(ref swagger)) => {
+                let async_connector = self.async_connector.clone().ok_or_else(|| {
+                    error::ExecutionEngine::NotFound("Async data connector not registered".into())
+                })?;
+
+                Ok((
+                    service_name.to_owned(),
+                    operation_name.to_owned(),
+                    swagger.clone(),
+                    (*service.commonApi).clone(),
+                    credentials,
+                    async_connector,
+                ))
+            }
+            _ => Err(error::ExecutionEngine::Unimplemented(
+                "resolve_data_connector called on a non-Swagger manifest".into(),
+            )),
+        }
+    }
+
     /// Queues a timestamped `(action_type) [status] id` line to the shared
     /// log writer.
     fn log(&self, id: &str, action_type: &str, status: &str) -> error::Result<()> {
@@ -774,5 +853,102 @@ mod tests {
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         assert!(!engine.is_workflow_operation("noDotHere", &ctx));
+    }
+
+    /// Builds a [`VersionedServiceTree`] wrapping a single `Swagger`
+    /// manifest with an empty `CommonApi`.
+    fn swagger_service() -> core_entities::service::VersionedServiceTree {
+        let mut manifest = core_entities::service::ServiceManifest::new();
+        manifest.mut_v2().mut_swagger();
+
+        let mut tree = core_entities::service::VersionedServiceTree::new();
+        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        tree.mut_v1().commonApi =
+            protobuf::MessageField::some(core_entities::service::CommonApi::new());
+        tree
+    }
+
+    struct FakeAsyncDataConnectionRunner {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl services::AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
+        async fn run(
+            &self,
+            name: &str,
+            operation_name: &str,
+            _bundle: &services::DataConnectorBundle,
+            _params: Value,
+            _options: Value,
+            _ctx: &EngineInputContext,
+        ) -> error::Result<Value> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((name.to_owned(), operation_name.to_owned()));
+            Ok(Value::String("connector called".into()))
+        }
+    }
+
+    #[test]
+    fn resolve_data_connector_returns_owned_pieces_for_a_swagger_manifest() {
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(swagger_service())));
+        let mut engine = Engine::new(lookup, test_logger());
+
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+            calls: Arc::clone(&calls),
+        }));
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let (service_name, operation_name, _manifest, _api, _creds, _runner) = engine
+            .resolve_data_connector("svc.execute", &ctx)
+            .expect("resolve_data_connector should succeed");
+
+        assert_eq!(service_name, "svc");
+        assert_eq!(operation_name, "execute");
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "resolve_data_connector should only resolve, never call the runner itself"
+        );
+    }
+
+    #[test]
+    fn resolve_data_connector_errors_when_no_async_connector_is_registered() {
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(swagger_service())));
+        let engine = Engine::new(lookup, test_logger());
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine.resolve_data_connector("svc.execute", &ctx);
+
+        assert!(
+            matches!(result, Err(error::ExecutionEngine::NotFound(_))),
+            "expected NotFound, got {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn resolve_data_connector_errors_when_the_manifest_is_not_swagger() {
+        let lookup: Arc<Mutex<dyn EngineLookup + Send + Sync>> =
+            Arc::new(Mutex::new(WorkflowLookup(workflow_service("return 42"))));
+        let mut engine = Engine::new(lookup, test_logger());
+
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+            calls: Arc::clone(&calls),
+        }));
+
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+        let result = engine.resolve_data_connector("svc.execute", &ctx);
+
+        assert!(
+            matches!(result, Err(error::ExecutionEngine::Unimplemented(_))),
+            "expected Unimplemented, got {:?}",
+            result.err()
+        );
     }
 }

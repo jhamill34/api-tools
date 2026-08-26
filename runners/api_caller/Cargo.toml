@@ -21,7 +21,9 @@ credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
 
 thiserror = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
 protobuf = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

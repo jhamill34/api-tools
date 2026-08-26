@@ -37,7 +37,9 @@ use base64::Engine as _;
 use common_data_structures::log_writer::LogWriter;
 use core_entities::service::{pagination, Operation, Parameter, SwaggerService};
 use credential_entities::credentials::Authentication;
-use execution_engine::services::{DataConnectionRunner, DataConnectorBundle, EngineInputContext};
+use execution_engine::services::{
+    AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext,
+};
 use http::{HeaderMap, HeaderName, HeaderValue};
 
 /// Converts a scalar JSON value to its string form, for use as a header,
@@ -252,6 +254,85 @@ impl APICallState {
         }
 
         let response_body: String = response.text()?;
+        if response_body.is_empty() {
+            log.write_all(b"\nNo Content\n")?;
+            Ok(serde_json::Value::Null)
+        } else {
+            let response = match serde_json::from_str(&response_body) {
+                Ok(value) => value,
+                Err(_) => serde_json::Value::String(response_body),
+            };
+            log.write_all(format!("\n{}\n", serde_json::to_string_pretty(&response)?).as_bytes())?;
+
+            Ok(response)
+        }
+    }
+
+    /// The async sibling of [`Self::send`] - identical request-building
+    /// logic (endpoint/header/body resolution, logging), just built on
+    /// `reqwest::Client`'s non-blocking `.send()`/`.text()` instead of the
+    /// blocking client's, so it never occupies a thread while waiting on
+    /// the network.
+    async fn send_async(
+        &self,
+        id: &str,
+        client: &reqwest::Client,
+        log: &LogWriter,
+    ) -> error::Result<serde_json::Value> {
+        let now = chrono::offset::Local::now();
+        let now = now.format(constants::DATETIME_FORMAT).to_string();
+
+        let method = self.method.parse::<reqwest::Method>()?;
+        let endpoint = self.resolve_endpoint()?;
+        log.write_all(b"==============================\n")?;
+        log.write_all(format!("ID = {id}\n").as_bytes())?;
+        log.write_all(format!("Time = {now}\n").as_bytes())?;
+        log.write_all(b"[REQUEST]\n")?;
+        log.write_all(format!("{} {}\n", &self.method, &endpoint).as_bytes())?;
+
+        let mut builder = client.request(method, endpoint);
+
+        let headers: error::Result<HeaderMap> = self
+            .header_params
+            .iter()
+            .map(|(key, val)| {
+                let name = key.parse::<HeaderName>()?;
+                let value = simplify_value(val).and_then(|value| {
+                    value.parse::<HeaderValue>().map_err(error::APICaller::from)
+                })?;
+
+                Ok((name, value))
+            })
+            .collect();
+        let headers = headers?;
+
+        log.write_all(b"Headers = \n")?;
+        for (key, value) in &headers {
+            log.write_all(format!("  {}: {}\n", key.as_str(), value.to_str()?).as_bytes())?;
+        }
+
+        builder = builder.headers(headers);
+
+        if let &Some(ref body) = &self.body {
+            log.write_all(format!("\n{}\n", serde_json::to_string_pretty(body)?).as_bytes())?;
+            builder = builder.json(body);
+        } else {
+            log.write_all(b"\nNo Body\n")?;
+        }
+
+        log.write_all(b"\n")?;
+
+        log.write_all(b"[RESPONSE]\n")?;
+        let response = builder.send().await?;
+
+        log.write_all(format!("Status = {}\n", response.status()).as_bytes())?;
+
+        log.write_all(b"Headers = \n")?;
+        for (key, value) in response.headers() {
+            log.write_all(format!("  {}: {}\n", key.as_str(), value.to_str()?).as_bytes())?;
+        }
+
+        let response_body: String = response.text().await?;
         if response_body.is_empty() {
             log.write_all(b"\nNo Content\n")?;
             Ok(serde_json::Value::Null)
@@ -843,6 +924,182 @@ impl DataConnectionRunner for APICaller {
     }
 }
 
+/// The async sibling of [`APICaller`] - same manifest-driven request
+/// building, auth, and pagination logic (all shared via [`APICallState`]),
+/// just executed over a pooled [`reqwest::Client`] instead of
+/// [`reqwest::blocking::Client`], so a call never occupies a thread while
+/// waiting on the network. See [`AsyncDataConnectionRunner`]'s docs for why
+/// this exists as a genuinely separate dispatch path rather than being
+/// reached through [`Engine::run`](execution_engine::Engine::run).
+pub struct AsyncAPICaller {
+    /// Where each request/response is logged.
+    log: LogWriter,
+
+    /// The shared async HTTP client every request is sent through.
+    client: reqwest::Client,
+}
+
+impl AsyncAPICaller {
+    /// Creates an [`AsyncAPICaller`] that logs to `log`, building its
+    /// [`reqwest::Client`] once up front.
+    #[must_use]
+    #[inline]
+    pub fn new(log: LogWriter) -> Self {
+        Self {
+            log,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// The async sibling of [`APICaller::run_internal`] - identical
+    /// pagination-loop shape, just `.await`s [`APICallState::send_async`]
+    /// instead of calling the blocking [`APICallState::send`].
+    async fn run_internal(
+        &self,
+        name: &str,
+        operation_name: &str,
+        bundle: &DataConnectorBundle<'_>,
+        params: &serde_json::Value,
+        options: &serde_json::Value,
+        ctx: &EngineInputContext,
+    ) -> error::Result<serde_json::Value> {
+        let operation = bundle
+            .api
+            .operations
+            .get(operation_name)
+            .ok_or_else(|| error::APICaller::OperationNotFound(operation_name.into()))?;
+
+        let total_limit = options.get("limit");
+
+        let total_limit: i32 = total_limit
+            .and_then(|value| match value {
+                &serde_json::Value::Number(ref n) if n.is_f64() => n.as_f64().map(|n| n as i32),
+                &serde_json::Value::Number(ref n) if n.is_i64() => n.as_i64().map(|n| n as i32),
+                &serde_json::Value::Number(ref n) if n.is_u64() => n.as_u64().map(|n| n as i32),
+                &serde_json::Value::Null
+                | &serde_json::Value::Bool(_)
+                | &serde_json::Value::Number(_)
+                | &serde_json::Value::String(_)
+                | &serde_json::Value::Array(_)
+                | &serde_json::Value::Object(_) => None,
+            })
+            .unwrap_or(constants::DEFAULT_LIMIT);
+
+        let mut total: i32 = 0;
+        let mut current_page: i32 = 0;
+
+        let mut page_responses: Vec<serde_json::Value> = Vec::new();
+
+        loop {
+            // Create a request payload
+            let mut call_state = APICallState::default();
+            call_state.set_body(params.get("$body").cloned());
+            call_state.collect_params(params, &operation.parameter, true)?;
+            call_state.handle_auth(bundle.manifest, bundle.creds)?;
+            call_state.set_method(operation)?;
+            call_state.set_endpoint(bundle.api.basePath(), &operation.path);
+
+            let request_size = call_state.handle_pagination(
+                &operation.pagination.value,
+                page_responses.last(),
+                current_page,
+                &operation.parameter,
+            )?;
+
+            // Send the request
+            let result = call_state
+                .send_async(
+                    format!("{name}.{operation_name}").as_str(),
+                    &self.client,
+                    &self.log,
+                )
+                .await?;
+
+            // Unless the provided context told us to paginate,
+            // we're going to bail early and just return the first raw response
+            if ctx.raw_response {
+                return Ok(result);
+            }
+
+            // Peek at what the results path is
+            let actual_result = find_results(&result, &operation.pagination.value)?;
+
+            // Determine how many items we got in a request
+            let current_size = if let &serde_json::Value::Array(ref arr) = actual_result {
+                i32::try_from(arr.len())?
+            } else {
+                1_i32
+            };
+
+            // Push the raw response onto the vector for us to reference in the next iteration
+            page_responses.push(result);
+
+            current_page = current_page
+                .checked_add(1)
+                .ok_or(error::APICaller::PagingOverflow)?;
+            total = total
+                .checked_add(current_size)
+                .ok_or(error::APICaller::PagingOverflow)?;
+
+            // Figure out if we're done or not
+            if request_size == 0_i32
+                || total_limit == 0_i32
+                || current_size < request_size
+                || total >= total_limit
+            {
+                break;
+            }
+        }
+
+        let result: error::Result<Vec<serde_json::Value>> = page_responses
+            .into_iter()
+            .map(|response| {
+                let result = find_results(&response, &operation.pagination.value)?.clone();
+                Ok(result)
+            })
+            .collect();
+
+        let result: Vec<serde_json::Value> = result?
+            .into_iter()
+            .flat_map(|response| {
+                if let serde_json::Value::Array(arr) = response {
+                    arr
+                } else {
+                    vec![response]
+                }
+            })
+            .collect();
+
+        let total_limit: usize = total_limit.try_into()?;
+        let result = if total_limit > 0 {
+            result.get(..total_limit).unwrap_or(&result).to_vec()
+        } else {
+            result
+        };
+
+        Ok(serde_json::Value::Array(result))
+    }
+}
+
+#[async_trait::async_trait]
+impl AsyncDataConnectionRunner for AsyncAPICaller {
+    #[inline]
+    async fn run(
+        &self,
+        name: &str,
+        operation_name: &str,
+        bundle: &DataConnectorBundle,
+        params: serde_json::Value,
+        options: serde_json::Value,
+        ctx: &EngineInputContext,
+    ) -> execution_engine::error::Result<serde_json::Value> {
+        let result = self
+            .run_internal(name, operation_name, bundle, &params, &options, ctx)
+            .await?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::sync::Arc;
@@ -923,6 +1180,66 @@ mod tests {
             1,
             "expected the second request to reuse the pooled connection from the first"
         );
+    }
+
+    #[tokio::test]
+    async fn async_api_caller_reuses_the_same_http_client_across_calls() {
+        let (base_url, accepted) = start_test_server();
+        let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
+        let caller = AsyncAPICaller::new(log);
+
+        caller
+            .client
+            .get(format!("{base_url}/ping"))
+            .send()
+            .await
+            .unwrap();
+        caller
+            .client
+            .get(format!("{base_url}/ping"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            1,
+            "expected the second request to reuse the pooled connection from the first"
+        );
+    }
+
+    #[tokio::test]
+    async fn async_api_caller_run_dispatches_a_real_http_request() {
+        let (base_url, _accepted) = start_test_server();
+        let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
+        let caller = AsyncAPICaller::new(log);
+
+        let mut operation = Operation::new();
+        operation.path = "/ping".to_owned();
+        operation.method =
+            EnumOrUnknown::new(core_entities::service::operation::HttpMethodType::GET);
+
+        let mut api = core_entities::service::CommonApi::new();
+        api.set_basePath(base_url);
+        api.operations.insert("execute".to_owned(), operation);
+
+        let manifest = SwaggerService::default();
+        let bundle = DataConnectorBundle::new(&manifest, &api, None);
+        let ctx = EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = caller
+            .run(
+                "svc",
+                "execute",
+                &bundle,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                &ctx,
+            )
+            .await
+            .expect("async api call should succeed");
+
+        assert_eq!(result, serde_json::json!([{}]));
     }
 
     #[test]

@@ -522,7 +522,7 @@ fn construct_execution_engine(
         workflow_logger.clone(),
     )));
 
-    let connector = Box::new(api_caller::APICaller::new(api_logger));
+    let connector = Box::new(api_caller::APICaller::new(api_logger.clone()));
 
     #[cfg(feature = "python")]
     let py_runner =
@@ -538,6 +538,9 @@ fn construct_execution_engine(
     #[cfg(feature = "workflow")]
     let workflow_adapter =
         workflow_runner::WorkflowAdapter::spawn(Arc::clone(&engine), workflow_logger.clone());
+
+    #[cfg(feature = "workflow")]
+    let async_connector = Arc::new(api_caller::AsyncAPICaller::new(api_logger));
 
     #[cfg(feature = "input")]
     let input_handler = Box::new(user_input::UserInput::new(signals));
@@ -563,6 +566,9 @@ fn construct_execution_engine(
 
         #[cfg(feature = "workflow")]
         engine.register_workflow_runner(Arc::new(workflow_adapter));
+
+        #[cfg(feature = "workflow")]
+        engine.register_async_connector(async_connector);
 
         #[cfg(feature = "input")]
         engine.register_input(input_handler);
