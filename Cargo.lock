@@ -152,7 +152,6 @@ dependencies = [
  "anyhow",
  "api_caller",
  "async-trait",
- "chrono",
  "common_data_structures",
  "core_entities",
  "credential_entities",
@@ -165,7 +164,6 @@ dependencies = [
  "javascript_runner",
  "local_file_loader",
  "lua_runner",
- "mlua",
  "notify",
  "prost",
  "protobuf",
@@ -182,7 +180,7 @@ dependencies = [
  "tracing-subscriber",
  "user_input",
  "uuid",
- "workflow_engine",
+ "workflow_runner",
 ]
 
 [[package]]
@@ -3869,6 +3867,25 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "workflow_runner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "common_data_structures",
+ "core_entities",
+ "credential_entities",
+ "execution_engine",
+ "mlua",
+ "protobuf",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "workflow_engine",
 ]
 
 [[package]]
