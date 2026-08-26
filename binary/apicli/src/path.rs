@@ -24,7 +24,7 @@ pub fn get_input_paths(
     let mut input_paths = Vec::new();
 
     match manifest {
-        &Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
             let operation = service
                 .commonApi
                 .operations
@@ -74,7 +74,7 @@ pub fn get_input_paths(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -94,13 +94,13 @@ pub fn get_input_paths(
                 );
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
             bail!("Unimplemented manifest type: ApiWrapped")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
         _ => bail!("Unknown manifest type"),
@@ -125,7 +125,7 @@ pub fn get_output_paths(
     let mut output_paths = Vec::new();
 
     match manifest {
-        &Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
             let operation = service
                 .commonApi
                 .operations
@@ -164,7 +164,7 @@ pub fn get_output_paths(
                 }
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::Action(ref manifest)) => {
+        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
@@ -181,13 +181,13 @@ pub fn get_output_paths(
                 );
             }
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
             bail!("Unimplemented manifest type: ApiWrapped")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        &Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
         _ => bail!("Unknown manifest type"),
@@ -312,7 +312,7 @@ pub fn populate_schema_list(
     prefix: &mut Vec<String>,
 ) {
     match schema {
-        &Some(core_entities::service::schema::Value::Ref(ref reference)) => {
+        Some(core_entities::service::schema::Value::Ref(reference)) => {
             let schema = types.get(reference).cloned().and_then(|s| s.value);
 
             if seen.contains_key(reference) {
@@ -335,22 +335,22 @@ pub fn populate_schema_list(
             populate_schema_list(list, &schema, types, seen, path, is_required, prefix);
             seen.remove(reference);
         }
-        &Some(core_entities::service::schema::Value::SchemaObject(ref schema)) => {
+        Some(core_entities::service::schema::Value::SchemaObject(schema)) => {
             populate_schema_object_list(list, schema, types, seen, path, is_required, prefix);
         }
-        &Some(core_entities::service::schema::Value::AllOf(ref all_of)) => {
+        Some(core_entities::service::schema::Value::AllOf(all_of)) => {
             for schema in &all_of.schema {
                 populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);
             }
         }
-        &Some(core_entities::service::schema::Value::OneOf(ref one_of)) => {
+        Some(core_entities::service::schema::Value::OneOf(one_of)) => {
             for (idx, schema) in one_of.schema.iter().enumerate() {
                 prefix.push(format!("one:{idx}"));
                 populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);
                 prefix.pop();
             }
         }
-        &Some(core_entities::service::schema::Value::AnyOf(ref any_of)) => {
+        Some(core_entities::service::schema::Value::AnyOf(any_of)) => {
             for (idx, schema) in any_of.schema.iter().enumerate() {
                 prefix.push(format!("any:{idx}"));
                 populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);

@@ -557,11 +557,11 @@ enum SchemaObject {
 /// nothing to merge).
 fn schemaify(value: &serde_json::Value) -> Schema {
     match value {
-        &serde_json::Value::Null => Schema::Single(SchemaObject::Null),
-        &serde_json::Value::Bool(_) => Schema::Single(SchemaObject::Boolean),
-        &serde_json::Value::Number(_) => Schema::Single(SchemaObject::Number),
-        &serde_json::Value::String(_) => Schema::Single(SchemaObject::String),
-        &serde_json::Value::Object(ref obj) => {
+        serde_json::Value::Null => Schema::Single(SchemaObject::Null),
+        serde_json::Value::Bool(_) => Schema::Single(SchemaObject::Boolean),
+        serde_json::Value::Number(_) => Schema::Single(SchemaObject::Number),
+        serde_json::Value::String(_) => Schema::Single(SchemaObject::String),
+        serde_json::Value::Object(obj) => {
             let mut properties = HashMap::new();
 
             for (key, value) in obj {
@@ -570,7 +570,7 @@ fn schemaify(value: &serde_json::Value) -> Schema {
 
             Schema::Single(SchemaObject::Object { properties })
         }
-        &serde_json::Value::Array(ref arr) => {
+        serde_json::Value::Array(arr) => {
             let result = arr.iter().map(schemaify).reduce(merge);
 
             if let Some(result) = result {
@@ -596,9 +596,9 @@ fn merge(left: Schema, right: Schema) -> Schema {
         left
     } else {
         match &left {
-            &Schema::Single(SchemaObject::Object { ref properties }) => match &right {
-                &Schema::Single(SchemaObject::Object {
-                    properties: ref right_properties,
+            Schema::Single(SchemaObject::Object { properties }) => match &right {
+                Schema::Single(SchemaObject::Object {
+                    properties: right_properties,
                 }) => {
                     let mut existing = HashMap::new();
 
@@ -620,7 +620,7 @@ fn merge(left: Schema, right: Schema) -> Schema {
                         properties: existing,
                     })
                 }
-                &Schema::Composite(SchemaComposite { ref one_of }) => {
+                Schema::Composite(SchemaComposite { one_of }) => {
                     let mut one_of = one_of.clone();
 
                     if !one_of.contains(&left) {
@@ -629,17 +629,17 @@ fn merge(left: Schema, right: Schema) -> Schema {
 
                     Schema::Composite(SchemaComposite { one_of })
                 }
-                &Schema::Single(_) => Schema::Composite(SchemaComposite {
+                Schema::Single(_) => Schema::Composite(SchemaComposite {
                     one_of: vec![left, right],
                 }),
             },
-            &Schema::Single(SchemaObject::Array { ref items }) => match &right {
-                &Schema::Single(SchemaObject::Array {
-                    items: ref right_items,
-                }) => Schema::Single(SchemaObject::Array {
-                    items: Box::new(merge((**items).clone(), (**right_items).clone())),
-                }),
-                &Schema::Composite(SchemaComposite { ref one_of }) => {
+            Schema::Single(SchemaObject::Array { items }) => match &right {
+                Schema::Single(SchemaObject::Array { items: right_items }) => {
+                    Schema::Single(SchemaObject::Array {
+                        items: Box::new(merge((**items).clone(), (**right_items).clone())),
+                    })
+                }
+                Schema::Composite(SchemaComposite { one_of }) => {
                     let mut one_of = one_of.clone();
 
                     if !one_of.contains(&left) {
@@ -648,12 +648,12 @@ fn merge(left: Schema, right: Schema) -> Schema {
 
                     Schema::Composite(SchemaComposite { one_of })
                 }
-                &Schema::Single(_) => Schema::Composite(SchemaComposite {
+                Schema::Single(_) => Schema::Composite(SchemaComposite {
                     one_of: vec![left, right],
                 }),
             },
-            &Schema::Composite(SchemaComposite { ref one_of }) => match &right {
-                &Schema::Single(_) => {
+            Schema::Composite(SchemaComposite { one_of }) => match &right {
+                Schema::Single(_) => {
                     let mut one_of = one_of.clone();
                     if !one_of.contains(&right) {
                         one_of.push(right);
@@ -661,8 +661,8 @@ fn merge(left: Schema, right: Schema) -> Schema {
 
                     Schema::Composite(SchemaComposite { one_of })
                 }
-                &Schema::Composite(SchemaComposite {
-                    one_of: ref right_one_of,
+                Schema::Composite(SchemaComposite {
+                    one_of: right_one_of,
                 }) => {
                     let mut one_of = one_of.clone();
                     for right_value in right_one_of {
@@ -674,11 +674,11 @@ fn merge(left: Schema, right: Schema) -> Schema {
                     Schema::Composite(SchemaComposite { one_of })
                 }
             },
-            &Schema::Single(_) => match &right {
-                &Schema::Single(_) => Schema::Composite(SchemaComposite {
+            Schema::Single(_) => match &right {
+                Schema::Single(_) => Schema::Composite(SchemaComposite {
                     one_of: vec![left, right],
                 }),
-                &Schema::Composite(SchemaComposite { ref one_of }) => {
+                Schema::Composite(SchemaComposite { one_of }) => {
                     let mut one_of = one_of.clone();
                     if !one_of.contains(&left) {
                         one_of.push(left.clone());
