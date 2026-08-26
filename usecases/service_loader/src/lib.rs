@@ -181,15 +181,18 @@ impl ServiceLoader {
         let mut value = load_service(fetcher, only_manifest)?;
 
         if !only_manifest && value.v1().manifest.v2().has_swagger() {
-            let creds = load_credentials(fetcher);
-            if let Ok(creds) = creds {
-                output.handle_credentials(id, creds)?;
+            match load_credentials(fetcher) {
+                Ok(creds) => output.handle_credentials(id, creds)?,
+                Err(error::ServiceLoader::Io { source }) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
             }
 
             if merge_overrides {
-                let config = load_configuration(fetcher);
-                if let Ok(config) = config {
-                    merge(&mut value, &config)?;
+                match load_configuration(fetcher) {
+                    Ok(config) => merge(&mut value, &config)?,
+                    Err(error::ServiceLoader::Io { source })
+                        if source.kind() == io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(err),
                 }
             }
         }
@@ -204,5 +207,106 @@ impl Default for ServiceLoader {
     #[inline]
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #![allow(clippy::restriction, clippy::pedantic)]
+
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MockFetcher {
+        docs: RefCell<HashMap<String, String>>,
+    }
+
+    impl MockFetcher {
+        fn with(self, location: &str, content: &str) -> Self {
+            self.docs
+                .borrow_mut()
+                .insert(location.to_owned(), content.to_owned());
+            self
+        }
+    }
+
+    impl Fetcher<io::Cursor<Vec<u8>>> for MockFetcher {
+        fn fetch(&self, location: &str) -> io::Result<io::Cursor<Vec<u8>>> {
+            self.docs
+                .borrow()
+                .get(location)
+                .map(|doc| io::Cursor::new(doc.clone().into_bytes()))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "not found"))
+        }
+    }
+
+    #[derive(Default)]
+    struct MockOutput {
+        credentials: Option<Authentication>,
+    }
+
+    impl LoaderOutput for MockOutput {
+        fn handle_service(&mut self, _id: &str, _service: VersionedServiceTree) -> error::Result<()> {
+            Ok(())
+        }
+
+        fn handle_credentials(
+            &mut self,
+            _id: &str,
+            credentials: Authentication,
+        ) -> error::Result<()> {
+            self.credentials = Some(credentials);
+            Ok(())
+        }
+    }
+
+    fn manifest_with_swagger() -> String {
+        r#"{"v2":{"swagger":{"source":"openapi"}}}"#.to_owned()
+    }
+
+    #[test]
+    fn load_skips_missing_credentials_and_config_files() {
+        let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
+        let fetcher = MockFetcher::default()
+            .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
+            .with("openapi", openapi_doc);
+        let mut output = MockOutput::default();
+
+        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, true, false);
+
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(output.credentials.is_none());
+    }
+
+    #[test]
+    fn load_propagates_malformed_credentials_instead_of_swallowing_them() {
+        let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
+        let fetcher = MockFetcher::default()
+            .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
+            .with("openapi", openapi_doc)
+            .with(constants::CREDENTIALS_LOCATION, "not valid json{{{");
+        let mut output = MockOutput::default();
+
+        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, false, false);
+
+        assert!(result.is_err(), "expected malformed credentials to surface as an error, got Ok");
+        assert!(output.credentials.is_none());
+    }
+
+    #[test]
+    fn load_propagates_malformed_config_instead_of_swallowing_it() {
+        let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
+        let fetcher = MockFetcher::default()
+            .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
+            .with("openapi", openapi_doc)
+            .with(constants::CONFIG_LOCATION, "not valid json{{{");
+        let mut output = MockOutput::default();
+
+        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, true, false);
+
+        assert!(result.is_err(), "expected malformed config to surface as an error, got Ok");
     }
 }
