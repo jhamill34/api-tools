@@ -25,6 +25,8 @@ mod config;
 mod constants;
 mod util;
 mod workers;
+#[cfg(feature = "workflow")]
+mod workflow_runner;
 
 extern crate alloc;
 use alloc::sync::Arc;
@@ -264,18 +266,69 @@ impl Engine for ApiDaemon {
         let signals = Arc::clone(&self.signals);
         let operation_id = req.id;
 
-        tokio::task::spawn_blocking(move || {
+        // Checked synchronously and briefly, with the lock dropped before
+        // any `.await` - see `Engine::is_workflow_operation`'s docs. This
+        // decides which of the two dispatch paths below to take; it does
+        // not do the actual dispatch.
+        let is_workflow = {
             let ctx = execution_engine::services::EngineInputContext::new(
                 None,
                 execution_id.to_string(),
                 false,
             );
+            let guard = engine.read().unwrap_or_else(PoisonError::into_inner);
+            guard.is_workflow_operation(&operation_id, &ctx)
+        };
 
-            finish_run(&execution_id.to_string(), &responses, &signals, move || {
-                let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
-                engine.run(&operation_id, input, options, &ctx)
+        if is_workflow {
+            // Genuinely async dispatch: awaited directly on the runtime,
+            // never through `spawn_blocking`, since the whole point of a
+            // `WorkflowRunner` is not blocking a thread while its steps run
+            // concurrently. `Engine::resolve_workflow` (sync) returns owned
+            // data with its lock dropped before this task ever awaits
+            // anything - see its docs for why holding the lock across the
+            // await isn't an option here.
+            tokio::spawn(async move {
+                let ctx = execution_engine::services::EngineInputContext::new(
+                    None,
+                    execution_id.to_string(),
+                    false,
+                );
+
+                let resolution = {
+                    let guard = engine.read().unwrap_or_else(PoisonError::into_inner);
+                    guard.resolve_workflow(&operation_id, &ctx)
+                };
+
+                finish_run_async(
+                    &execution_id.to_string(),
+                    &responses,
+                    &signals,
+                    async move {
+                        let (operation_name, workflow, workflow_runner) = resolution?;
+                        let result = workflow_runner
+                            .run(&operation_name, &workflow, input, &ctx)
+                            .await?;
+
+                        Ok(execution_engine::wrap_result(result, ctx.raw_response))
+                    },
+                )
+                .await;
             });
-        });
+        } else {
+            tokio::task::spawn_blocking(move || {
+                let ctx = execution_engine::services::EngineInputContext::new(
+                    None,
+                    execution_id.to_string(),
+                    false,
+                );
+
+                finish_run(&execution_id.to_string(), &responses, &signals, move || {
+                    let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
+                    engine.run(&operation_id, input, options, &ctx)
+                });
+            });
+        }
 
         Ok(Response::new(response))
     }
@@ -380,6 +433,56 @@ fn finish_run<F>(
     signals.remove(execution_id);
 }
 
+/// The async sibling of [`finish_run`]: awaits `task`, converts its result
+/// into a [`GetRunResultResponse`], and records it under `execution_id` in
+/// `responses` before always removing the matching `signals` entry - even
+/// when `task` panics, so a failing workflow run never leaves its status
+/// stuck at `Running` forever.
+///
+/// `task` runs inside its own `tokio::spawn`ed task (rather than being
+/// awaited directly) so a panic inside it surfaces as a `JoinError` here
+/// instead of unwinding through this task - the async equivalent of
+/// [`finish_run`]'s `panic::catch_unwind`.
+async fn finish_run_async<F>(
+    execution_id: &str,
+    responses: &Mutex<HashMap<String, GetRunResultResponse>>,
+    signals: &Signals,
+    task: F,
+) where
+    F: std::future::Future<Output = execution_engine::error::Result<serde_json::Value>>
+        + Send
+        + 'static,
+{
+    let outcome = tokio::spawn(task).await;
+
+    let output = match outcome {
+        Ok(Ok(result)) => serde_json::to_string_pretty(&result)
+            .unwrap_or_else(|err| serde_json::json!({ "error": err.to_string() }).to_string()),
+        Ok(Err(err)) => serde_json::json!({ "error": err.to_string() }).to_string(),
+        Err(join_err) => {
+            let msg = if join_err.is_panic() {
+                panic_message(join_err.into_panic().as_ref())
+            } else {
+                "task cancelled".to_owned()
+            };
+            serde_json::json!({ "error": format!("panic: {msg}") }).to_string()
+        }
+    };
+
+    let result = GetRunResultResponse {
+        status: get_run_result_response::Status::Completed.into(),
+        output: Some(output),
+    };
+
+    {
+        let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
+        responses.insert(execution_id.to_owned(), result);
+    }
+
+    let mut signals = signals.lock().unwrap_or_else(PoisonError::into_inner);
+    signals.remove(execution_id);
+}
+
 /// Extracts a human-readable message from a caught panic payload, falling
 /// back to a generic message for a panic value that isn't a `&str`/`String`
 /// (e.g. one raised via `std::panic::panic_any`).
@@ -455,6 +558,9 @@ fn construct_execution_engine(
 
         #[cfg(feature = "lua")]
         engine.register_language(constants::LUA_LANG, Box::new(lua_runner));
+
+        #[cfg(feature = "workflow")]
+        engine.register_workflow_runner(Arc::new(workflow_runner::WorkflowAdapter::spawn()));
 
         #[cfg(feature = "input")]
         engine.register_input(input_handler);
@@ -695,6 +801,114 @@ mod tests {
         assert!(
             !signals.lock().unwrap().contains_key(&execution_id),
             "expected the signal entry to be cleaned up even when the task panics"
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_run_async_records_a_completed_response_on_success() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run_async(&execution_id, &responses, &signals, async {
+            Ok(serde_json::json!({ "hello": "world" }))
+        })
+        .await;
+
+        let responses = responses.lock().unwrap();
+        let result = responses.get(&execution_id).expect("response recorded");
+        assert_eq!(result.status(), get_run_result_response::Status::Completed);
+        assert!(result.output.as_ref().unwrap().contains("hello"));
+
+        assert!(
+            !signals.lock().unwrap().contains_key(&execution_id),
+            "expected the signal entry to be cleaned up"
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_run_async_records_an_error_response_when_the_task_returns_err() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run_async(&execution_id, &responses, &signals, async {
+            Err(execution_engine::error::ExecutionEngine::NotFound(
+                "widget".into(),
+            ))
+        })
+        .await;
+
+        let responses = responses.lock().unwrap();
+        let result = responses.get(&execution_id).expect("response recorded");
+        assert_eq!(result.status(), get_run_result_response::Status::Completed);
+        assert!(result.output.as_ref().unwrap().contains("widget"));
+
+        assert!(!signals.lock().unwrap().contains_key(&execution_id));
+    }
+
+    #[tokio::test]
+    async fn finish_run_async_does_not_leave_the_response_stuck_at_running_when_the_task_panics() {
+        let (responses, signals, execution_id) = empty_state();
+
+        finish_run_async(&execution_id, &responses, &signals, async {
+            panic!("boom")
+        })
+        .await;
+
+        let responses = responses.lock().unwrap();
+        let result = responses
+            .get(&execution_id)
+            .expect("a panicking run must still record a response, not leave it stuck at Running");
+        assert_eq!(
+            result.status(),
+            get_run_result_response::Status::Completed,
+            "a panicking run must be reported as Completed (with an error), not left Running forever"
+        );
+        assert!(result.output.as_ref().unwrap().contains("boom"));
+
+        assert!(
+            !signals.lock().unwrap().contains_key(&execution_id),
+            "expected the signal entry to be cleaned up even when the task panics"
+        );
+    }
+
+    #[cfg(feature = "workflow")]
+    #[tokio::test]
+    async fn workflow_adapter_runs_lua_source_from_the_manifest() {
+        use execution_engine::services::WorkflowRunner as _;
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_codeString("return input.x + 1".to_owned());
+
+        let adapter = workflow_runner::WorkflowAdapter::spawn();
+        let ctx = execution_engine::services::EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("execute", &manifest, serde_json::json!({ "x": 41 }), &ctx)
+            .await
+            .expect("workflow run should succeed");
+
+        assert_eq!(result, serde_json::json!(42));
+    }
+
+    #[cfg(feature = "workflow")]
+    #[tokio::test]
+    async fn workflow_adapter_rejects_a_resource_path_manifest() {
+        use execution_engine::services::WorkflowRunner as _;
+
+        let mut manifest = core_entities::service::WorkflowService::new();
+        manifest.set_resourcePath("workflow.lua".to_owned());
+
+        let adapter = workflow_runner::WorkflowAdapter::spawn();
+        let ctx = execution_engine::services::EngineInputContext::new(None, "exec-1".into(), false);
+
+        let result = adapter
+            .run("execute", &manifest, serde_json::Value::Null, &ctx)
+            .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(execution_engine::error::ExecutionEngine::Unimplemented(_))
+            ),
+            "expected Unimplemented, got {result:?}"
         );
     }
 }

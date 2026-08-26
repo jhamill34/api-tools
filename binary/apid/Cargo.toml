@@ -37,10 +37,12 @@ javascript_runner = { path = "../../runners/javascript_runner" }
 lua_runner = { path = "../../runners/lua_runner" }
 user_input = { path = "../../runners/user_input" }
 filtered_runner = { path = "../../runners/filtered_runner" }
+workflow_engine = { path = "../../prototypes/workflow_engine" }
 
 common_data_structures = { path = "../../common/data_structures" }
 
 anyhow = { workspace = true, features = ["backtrace"] }
+async-trait = { workspace = true }
 
 dhat = { workspace = true }
 
@@ -55,6 +57,7 @@ default = ["python", "input", "javascript", "wrapper"]
 python = []
 javascript = []
 lua = []
+workflow = []
 input = []
 wrapper = []
 
