@@ -182,10 +182,6 @@ impl Engine {
         options: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
-        // SimpleCode -> CodeRunner
-        // ApiWrapper -> FilteredRunner
-        // ScriptedAction -> ScriptRunner
-
         if identifier == "$input" {
             if let Some(input_handler) = &self.input_handler {
                 return input_handler.run(params, context);
@@ -209,125 +205,218 @@ impl Engine {
         let manifest = service.manifest.v2();
 
         let result = match &manifest.value {
-            Some(service_manifest_latest::Value::Swagger(swagger)) => {
-                if let Some(connector) = &self.connector {
-                    let api = &service.commonApi;
-                    let creds = credentials.as_ref();
-
-                    let bundle = DataConnectorBundle {
-                        manifest: swagger,
-                        api,
-                        creds,
-                    };
-                    connector.run(
-                        service_name,
-                        operation_name,
-                        &bundle,
-                        params,
-                        options,
-                        context,
-                    )
-                } else {
-                    Err(error::ExecutionEngine::NotFound(
-                        "Data connector runner".into(),
-                    ))
-                }
-            }
-            Some(service_manifest_latest::Value::Action(action)) => {
-                let operation = action
-                    .operations
-                    .iter()
-                    .find(|item| item.id == *operation_name);
-                if let Some(operation) = operation {
-                    let operation = operation.function();
-
-                    let path = format!("{}/{}", action.source, operation.js());
-
-                    let source = service
-                        .resources
-                        .iter()
-                        .find(|item| item.relativePath == path)
-                        .ok_or(error::ExecutionEngine::NotFound(format!(
-                            "Source file for {service_name}.{operation_name}"
-                        )))?;
-
-                    if let Some(code_runner) = self.code_runners.get(&operation.lang) {
-                        self.log(identifier, "ACTION", "STARTED")?;
-                        let result = code_runner.run(
-                            service_name,
-                            operation_name,
-                            &source.content,
-                            params,
-                            context,
-                        )?;
-                        self.log(identifier, "ACTION", "COMPLETED")?;
-
-                        Ok(result)
-                    } else {
-                        Err(error::ExecutionEngine::NotFound(format!(
-                            "Code Runner for language {} not found",
-                            operation.lang
-                        )))
-                    }
-                } else {
-                    Err(error::ExecutionEngine::NotFound(format!(
-                        "Action operation {operation_name}"
-                    )))
-                }
-            }
-            Some(service_manifest_latest::Value::ApiWrapped(api_wrapped)) => {
-                if let Some(filtered_runner) = &self.filtered_runner {
-                    self.log(identifier, "API_WRAPPED", "STARTED")?;
-                    let result = filtered_runner.run(
-                        service_name,
-                        operation_name,
-                        api_wrapped,
-                        params,
-                        context,
-                    )?;
-                    self.log(identifier, "API_WRAPPED", "COMPLETED")?;
-
-                    Ok(result)
-                } else {
-                    Err(error::ExecutionEngine::NotFound(
-                        "API Wrapper runner not found".into(),
-                    ))
-                }
-            }
-            Some(service_manifest_latest::Value::SimpleCode(simple_code)) => {
-                match simple_code.code.language.enum_value() {
-                    Ok(Language::PYTHON) => self.dispatch_code_runner(
-                        identifier,
-                        service_name,
-                        operation_name,
-                        "python",
-                        simple_code.code.codeString(),
-                        params,
-                        context,
-                    ),
-                    Ok(Language::JAVASCRIPT) => self.dispatch_code_runner(
-                        identifier,
-                        service_name,
-                        operation_name,
-                        "js",
-                        simple_code.code.codeString(),
-                        params,
-                        context,
-                    ),
-                    // LUA is deliberately not dispatched to here - see #73:
-                    // `Workflow`-kind manifests (via `WorkflowRunner`) are
-                    // the replacement for Lua `SimpleCode` operations, not
-                    // a second parallel Lua execution path through this
-                    // arm. The `LUA` enum variant itself stays defined
-                    // (harmless, and a smaller footprint than removing a
-                    // wire enum value), it's just unreachable here now.
-                    _ => Err(error::ExecutionEngine::NotFound("Unknown language".into())),
-                }
-            }
+            Some(service_manifest_latest::Value::Swagger(swagger)) => self.dispatch_swagger(
+                service_name,
+                operation_name,
+                service,
+                swagger,
+                credentials,
+                params,
+                options,
+                context,
+            ),
+            Some(service_manifest_latest::Value::Action(action)) => self.dispatch_action(
+                identifier,
+                service_name,
+                operation_name,
+                service,
+                action,
+                params,
+                context,
+            ),
+            Some(service_manifest_latest::Value::ApiWrapped(api_wrapped)) => self
+                .dispatch_api_wrapped(
+                    identifier,
+                    service_name,
+                    operation_name,
+                    api_wrapped,
+                    params,
+                    context,
+                ),
+            Some(service_manifest_latest::Value::SimpleCode(simple_code)) => self
+                .dispatch_simple_code(
+                    identifier,
+                    service_name,
+                    operation_name,
+                    simple_code,
+                    params,
+                    context,
+                ),
             _ => Err(error::ExecutionEngine::Unimplemented("API Runner".into())),
         }?;
 
         Ok(wrap_result(result, context.raw_response))
+    }
+
+    /// Dispatches a `Swagger`-kind manifest to the registered
+    /// [`DataConnectionRunner`] - the `Swagger` arm of [`Engine::run`]'s
+    /// dispatch.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is a distinct dispatch input passed through from Engine::run; \
+                  see dispatch_code_runner's doc comment above for the same reasoning (#16)"
+    )]
+    fn dispatch_swagger(
+        &self,
+        service_name: &str,
+        operation_name: &str,
+        service: &core_entities::service::versioned_service_tree::V1,
+        swagger: &core_entities::service::SwaggerService,
+        credentials: Option<credential_entities::credentials::Authentication>,
+        params: Value,
+        options: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        if let Some(connector) = &self.connector {
+            let api = &service.commonApi;
+            let creds = credentials.as_ref();
+
+            let bundle = DataConnectorBundle {
+                manifest: swagger,
+                api,
+                creds,
+            };
+            connector.run(
+                service_name,
+                operation_name,
+                &bundle,
+                params,
+                options,
+                context,
+            )
+        } else {
+            Err(error::ExecutionEngine::NotFound(
+                "Data connector runner".into(),
+            ))
+        }
+    }
+
+    /// Dispatches an `Action`-kind manifest to the registered [`CodeRunner`]
+    /// for the resolved operation's language - the `Action` arm of
+    /// [`Engine::run`]'s dispatch.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is a distinct dispatch input passed through from Engine::run; \
+                  see dispatch_code_runner's doc comment above for the same reasoning (#16)"
+    )]
+    fn dispatch_action(
+        &self,
+        identifier: &str,
+        service_name: &str,
+        operation_name: &str,
+        service: &core_entities::service::versioned_service_tree::V1,
+        action: &core_entities::service::ActionService,
+        params: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        let operation = action
+            .operations
+            .iter()
+            .find(|item| item.id == *operation_name);
+        if let Some(operation) = operation {
+            let operation = operation.function();
+
+            let path = format!("{}/{}", action.source, operation.js());
+
+            let source = service
+                .resources
+                .iter()
+                .find(|item| item.relativePath == path)
+                .ok_or(error::ExecutionEngine::NotFound(format!(
+                    "Source file for {service_name}.{operation_name}"
+                )))?;
+
+            if let Some(code_runner) = self.code_runners.get(&operation.lang) {
+                self.log(identifier, "ACTION", "STARTED")?;
+                let result = code_runner.run(
+                    service_name,
+                    operation_name,
+                    &source.content,
+                    params,
+                    context,
+                )?;
+                self.log(identifier, "ACTION", "COMPLETED")?;
+
+                Ok(result)
+            } else {
+                Err(error::ExecutionEngine::NotFound(format!(
+                    "Code Runner for language {} not found",
+                    operation.lang
+                )))
+            }
+        } else {
+            Err(error::ExecutionEngine::NotFound(format!(
+                "Action operation {operation_name}"
+            )))
+        }
+    }
+
+    /// Dispatches an `ApiWrapped`-kind manifest to the registered
+    /// [`FilteredRunner`] - the `ApiWrapped` arm of [`Engine::run`]'s
+    /// dispatch.
+    fn dispatch_api_wrapped(
+        &self,
+        identifier: &str,
+        service_name: &str,
+        operation_name: &str,
+        api_wrapped: &core_entities::service::APIWrappedService,
+        params: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        if let Some(filtered_runner) = &self.filtered_runner {
+            self.log(identifier, "API_WRAPPED", "STARTED")?;
+            let result =
+                filtered_runner.run(service_name, operation_name, api_wrapped, params, context)?;
+            self.log(identifier, "API_WRAPPED", "COMPLETED")?;
+
+            Ok(result)
+        } else {
+            Err(error::ExecutionEngine::NotFound(
+                "API Wrapper runner not found".into(),
+            ))
+        }
+    }
+
+    /// Dispatches a `SimpleCode`-kind manifest to the [`CodeRunner`]
+    /// registered for its `language` - the `SimpleCode` arm of
+    /// [`Engine::run`]'s dispatch.
+    fn dispatch_simple_code(
+        &self,
+        identifier: &str,
+        service_name: &str,
+        operation_name: &str,
+        simple_code: &core_entities::service::SimpleCodeService,
+        params: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        match simple_code.code.language.enum_value() {
+            Ok(Language::PYTHON) => self.dispatch_code_runner(
+                identifier,
+                service_name,
+                operation_name,
+                "python",
+                simple_code.code.codeString(),
+                params,
+                context,
+            ),
+            Ok(Language::JAVASCRIPT) => self.dispatch_code_runner(
+                identifier,
+                service_name,
+                operation_name,
+                "js",
+                simple_code.code.codeString(),
+                params,
+                context,
+            ),
+            // LUA is deliberately not dispatched to here - see #73:
+            // `Workflow`-kind manifests (via `WorkflowRunner`) are
+            // the replacement for Lua `SimpleCode` operations, not
+            // a second parallel Lua execution path through this
+            // arm. The `LUA` enum variant itself stays defined
+            // (harmless, and a smaller footprint than removing a
+            // wire enum value), it's just unreachable here now.
+            _ => Err(error::ExecutionEngine::NotFound("Unknown language".into())),
+        }
     }
 
     /// Resolves `identifier` against a `Workflow`-kind manifest, returning
