@@ -33,7 +33,7 @@ use execution_engine::services::EngineLookup;
 use in_memory_storage::{repo::InMemoryRepository, OperationRepos};
 use local_file_loader::LocalFileFetcher;
 use protobuf::Message;
-use service_writer::ServiceWriter;
+use service_writer::{ServiceWriter, ServiceWriterPort};
 use tonic::{transport::Server, Request, Response, Status};
 
 #[cfg(feature = "dhat-heap")]
@@ -51,7 +51,7 @@ struct ApiDaemon {
     paths: Arc<HashMap<String, PathBuf>>,
 
     /// The execution engine runs are dispatched to.
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
 
     /// Results of in-flight and completed runs, keyed by execution ID.
     responses: Arc<Mutex<HashMap<String, GetRunResultResponse>>>,
@@ -64,7 +64,7 @@ impl ApiDaemon {
     fn new(
         repos: Arc<Mutex<OperationRepos>>,
         paths: Arc<HashMap<String, PathBuf>>,
-        engine: Arc<RwLock<execution_engine::Engine>>,
+        engine: Arc<dyn execution_engine::EngineService>,
         responses: Arc<Mutex<HashMap<String, GetRunResultResponse>>>,
     ) -> Self {
         Self {
@@ -73,6 +73,57 @@ impl ApiDaemon {
             engine,
             responses,
         }
+    }
+}
+
+/// Adapts a shared, lock-guarded [`execution_engine::Engine`] to
+/// [`execution_engine::EngineService`]'s unlocked, `&self` contract -
+/// mirrors [`LockedLookup`]. `apid` still hands out the concrete
+/// `Arc<RwLock<execution_engine::Engine>>` to every `runners/*` adapter that
+/// needs to call back into the engine (they depend on the concrete type
+/// directly); this wrapper exists only so `ApiDaemon` itself can depend on
+/// the driving-port trait instead.
+struct LockedEngine(Arc<RwLock<execution_engine::Engine>>);
+
+impl execution_engine::EngineService for LockedEngine {
+    fn run(
+        &self,
+        identifier: &str,
+        params: serde_json::Value,
+        options: serde_json::Value,
+        context: &execution_engine::services::EngineInputContext,
+    ) -> execution_engine::error::Result<serde_json::Value> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .run(identifier, params, options, context)
+    }
+
+    fn is_workflow_operation(
+        &self,
+        identifier: &str,
+        context: &execution_engine::services::EngineInputContext,
+    ) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_workflow_operation(identifier, context)
+    }
+
+    fn resolve_workflow(
+        &self,
+        identifier: &str,
+        context: &execution_engine::services::EngineInputContext,
+    ) -> execution_engine::error::Result<(
+        String,
+        String,
+        core_entities::service::WorkflowService,
+        Arc<dyn execution_engine::services::WorkflowRunner>,
+    )> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .resolve_workflow(identifier, context)
     }
 }
 
@@ -175,7 +226,7 @@ impl Engine for ApiDaemon {
             .ok_or_else(|| Status::not_found("Service location not found"))?;
         let storage = LocalFileFetcher::from(location.clone());
 
-        let writer = ServiceWriter::default();
+        let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
 
         if let Some(service) = req.raw_service {
             let service = VersionedServiceTree::parse_from_bytes(&service)
@@ -234,18 +285,18 @@ impl Engine for ApiDaemon {
         let responses = Arc::clone(&self.responses);
         let operation_id = req.id;
 
-        // Checked synchronously and briefly, with the lock dropped before
-        // any `.await` - see `Engine::is_workflow_operation`'s docs. This
-        // decides which of the two dispatch paths below to take; it does
-        // not do the actual dispatch.
+        // This decides which of the two dispatch paths below to take; it
+        // does not do the actual dispatch. `EngineService::is_workflow_operation`
+        // does its own locking internally and returns without holding
+        // anything, so there's nothing to drop before the `.await` below -
+        // see `Engine::is_workflow_operation`'s docs.
         let is_workflow = {
             let ctx = execution_engine::services::EngineInputContext::new(
                 None,
                 execution_id.to_string(),
                 false,
             );
-            let guard = engine.read().unwrap_or_else(PoisonError::into_inner);
-            guard.is_workflow_operation(&operation_id, &ctx)
+            engine.is_workflow_operation(&operation_id, &ctx)
         };
 
         if is_workflow {
@@ -263,10 +314,7 @@ impl Engine for ApiDaemon {
                     false,
                 );
 
-                let resolution = {
-                    let guard = engine.read().unwrap_or_else(PoisonError::into_inner);
-                    guard.resolve_workflow(&operation_id, &ctx)
-                };
+                let resolution = engine.resolve_workflow(&operation_id, &ctx);
 
                 finish_run_async(&execution_id.to_string(), &responses, async move {
                     let (service_name, operation_name, workflow, workflow_runner) = resolution?;
@@ -287,7 +335,6 @@ impl Engine for ApiDaemon {
                 );
 
                 finish_run(&execution_id.to_string(), &responses, move || {
-                    let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
                     engine.run(&operation_id, input, options, &ctx)
                 });
             });
@@ -327,9 +374,15 @@ fn finish_run<F>(
     responses: &Mutex<HashMap<String, GetRunResultResponse>>,
     task: F,
 ) where
-    F: FnOnce() -> execution_engine::error::Result<serde_json::Value> + panic::UnwindSafe,
+    F: FnOnce() -> execution_engine::error::Result<serde_json::Value>,
 {
-    let outcome = panic::catch_unwind(task);
+    // AssertUnwindSafe is sound here: this function only ever reads `task`'s
+    // return value (Ok/Err/panic payload) below, never any state `task`
+    // might have partially mutated - there's nothing to observe as
+    // inconsistent even if `task` panics mid-way. `Arc<dyn EngineService>`
+    // (an opaque trait object) doesn't implement `RefUnwindSafe` on its own,
+    // which is what actually requires this.
+    let outcome = panic::catch_unwind(panic::AssertUnwindSafe(task));
 
     let output = match outcome {
         Ok(Ok(result)) => serde_json::to_string_pretty(&result)
@@ -578,7 +631,8 @@ async fn main() -> anyhow::Result<()> {
         .await??
     };
 
-    let engine = ApiDaemon::new(repos, paths, engine, response_store);
+    let engine_service: Arc<dyn execution_engine::EngineService> = Arc::new(LockedEngine(engine));
+    let engine = ApiDaemon::new(repos, paths, engine_service, response_store);
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
     tracing::info!(%addr, "starting server");

@@ -195,6 +195,46 @@ impl Default for ServiceLoader {
     }
 }
 
+/// A primary/driving port: the behavioral surface a driving adapter (e.g.
+/// `apid`'s background loader) calls to load a service. Unlike [`Fetcher`]/
+/// [`LoaderOutput`] - which [`ServiceLoader`] itself calls *out* through -
+/// this one is implemented *by* [`ServiceLoader`] and called *into* by
+/// whoever is driving it, so a caller can depend on this interface instead
+/// of the concrete [`ServiceLoader`] type.
+pub trait ServiceLoaderPort<R>
+where
+    R: io::Read,
+{
+    /// See [`ServiceLoader::load`].
+    ///
+    /// # Errors
+    fn load(
+        &self,
+        id: &str,
+        fetcher: &dyn Fetcher<R>,
+        output: &mut dyn LoaderOutput,
+        merge_overrides: bool,
+        only_manifest: bool,
+    ) -> error::Result<()>;
+}
+
+impl<R> ServiceLoaderPort<R> for ServiceLoader
+where
+    R: io::Read,
+{
+    #[inline]
+    fn load(
+        &self,
+        id: &str,
+        fetcher: &dyn Fetcher<R>,
+        output: &mut dyn LoaderOutput,
+        merge_overrides: bool,
+        only_manifest: bool,
+    ) -> error::Result<()> {
+        self.load(id, fetcher, output, merge_overrides, only_manifest)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::cell::RefCell;

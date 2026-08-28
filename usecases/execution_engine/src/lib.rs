@@ -81,6 +81,47 @@ pub struct Engine {
     async_connector: Option<Arc<dyn AsyncDataConnectionRunner>>,
 }
 
+/// A primary/driving port: the behavioral surface a driving adapter (e.g.
+/// `apid`'s gRPC handlers) calls once an [`Engine`] has been fully built and
+/// every adapter registered. Unlike [`services`]' traits - which [`Engine`]
+/// itself calls *out* through to a registered adapter - this one is
+/// implemented *by* [`Engine`] and called *into* by whoever is driving it,
+/// so a caller can depend on this interface instead of the concrete
+/// [`Engine`] type.
+pub trait EngineService: Send + Sync {
+    /// See [`Engine::run`].
+    ///
+    /// # Errors
+    fn run(
+        &self,
+        identifier: &str,
+        params: Value,
+        options: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value>;
+
+    /// See [`Engine::is_workflow_operation`].
+    fn is_workflow_operation(&self, identifier: &str, context: &EngineInputContext) -> bool;
+
+    /// See [`Engine::resolve_workflow`].
+    ///
+    /// # Errors
+    #[allow(
+        clippy::type_complexity,
+        reason = "mirrors Engine::resolve_workflow's own return shape"
+    )]
+    fn resolve_workflow(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::WorkflowService,
+        Arc<dyn WorkflowRunner>,
+    )>;
+}
+
 impl Engine {
     /// Creates an [`Engine`] with no adapters registered yet; use the
     /// `register_*` methods to add them.
@@ -630,6 +671,38 @@ impl Engine {
             .write_all(format!("{now} ({action_type}) [{status}] {id}\n").as_bytes())?;
 
         Ok(())
+    }
+}
+
+impl EngineService for Engine {
+    #[inline]
+    fn run(
+        &self,
+        identifier: &str,
+        params: Value,
+        options: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        self.run(identifier, params, options, context)
+    }
+
+    #[inline]
+    fn is_workflow_operation(&self, identifier: &str, context: &EngineInputContext) -> bool {
+        self.is_workflow_operation(identifier, context)
+    }
+
+    #[inline]
+    fn resolve_workflow(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::WorkflowService,
+        Arc<dyn WorkflowRunner>,
+    )> {
+        self.resolve_workflow(identifier, context)
     }
 }
 
