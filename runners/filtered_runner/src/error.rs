@@ -18,7 +18,8 @@ pub enum FilteredRunner {
     PathTraversal(String),
 
     /// The shared engine's lock was poisoned by a panic in another thread
-    /// while holding it.
+    /// while holding it. Reserved; currently unused - engine locking now
+    /// happens transparently behind `execution_engine::EngineService`.
     #[error("Poisoned Lock: {0}")]
     PoisonedLock(String),
 

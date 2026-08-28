@@ -15,7 +15,7 @@ use std::{
     fs::{self, File},
     panic,
     path::PathBuf,
-    sync::{Arc, Mutex, PoisonError, RwLock},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use anyhow::{anyhow, Context};
@@ -73,57 +73,6 @@ impl ApiDaemon {
             engine,
             responses,
         }
-    }
-}
-
-/// Adapts a shared, lock-guarded [`execution_engine::Engine`] to
-/// [`execution_engine::EngineService`]'s unlocked, `&self` contract -
-/// mirrors [`LockedLookup`]. `apid` still hands out the concrete
-/// `Arc<RwLock<execution_engine::Engine>>` to every `runners/*` adapter that
-/// needs to call back into the engine (they depend on the concrete type
-/// directly); this wrapper exists only so `ApiDaemon` itself can depend on
-/// the driving-port trait instead.
-struct LockedEngine(Arc<RwLock<execution_engine::Engine>>);
-
-impl execution_engine::EngineService for LockedEngine {
-    fn run(
-        &self,
-        identifier: &str,
-        params: serde_json::Value,
-        options: serde_json::Value,
-        context: &execution_engine::services::EngineInputContext,
-    ) -> execution_engine::error::Result<serde_json::Value> {
-        self.0
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .run(identifier, params, options, context)
-    }
-
-    fn is_workflow_operation(
-        &self,
-        identifier: &str,
-        context: &execution_engine::services::EngineInputContext,
-    ) -> bool {
-        self.0
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_workflow_operation(identifier, context)
-    }
-
-    fn resolve_workflow(
-        &self,
-        identifier: &str,
-        context: &execution_engine::services::EngineInputContext,
-    ) -> execution_engine::error::Result<(
-        String,
-        String,
-        core_entities::service::WorkflowService,
-        Arc<dyn execution_engine::services::WorkflowRunner>,
-    )> {
-        self.0
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .resolve_workflow(identifier, context)
     }
 }
 
@@ -495,43 +444,53 @@ fn construct_execution_engine(
     lookup: Arc<dyn EngineLookup + Sync + Send>,
     workflow_path: &str,
     api_path: &str,
-) -> anyhow::Result<Arc<RwLock<execution_engine::Engine>>> {
+) -> anyhow::Result<Arc<dyn execution_engine::EngineService>> {
     let (workflow_logger, _workflow_logger_handle) =
         common_data_structures::log_writer::LogWriter::spawn(File::create(workflow_path)?);
 
     let (api_logger, _api_logger_handle) =
         common_data_structures::log_writer::LogWriter::spawn(File::create(api_path)?);
 
-    let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
-        lookup,
-        workflow_logger.clone(),
-    )));
+    // Every adapter below gets a handle to the engine before it's finished
+    // being registered onto it below - `Arc::new_cyclic` hands us a
+    // `Weak<Engine>` that's valid to clone into those adapters right now,
+    // and becomes upgradable the instant this closure returns and the real
+    // `Arc<Engine>` exists. See `WeakEngine`'s docs for why a non-owning
+    // `Weak` handle (rather than a strong `Arc`) is what avoids a reference
+    // cycle here: `Engine` owns each adapter, so a strong handle back to
+    // `Engine` from inside an adapter it owns would be a cycle neither side
+    // could ever be freed from.
+    let engine = Arc::new_cyclic(|weak_engine| {
+        let weak_handle: Arc<dyn execution_engine::EngineService> =
+            Arc::new(execution_engine::WeakEngine::new(weak_engine.clone()));
 
-    let connector = Box::new(api_caller::APICaller::new(api_logger.clone()));
+        let mut engine = execution_engine::Engine::new(lookup, workflow_logger.clone());
 
-    #[cfg(feature = "python")]
-    let py_runner =
-        python_runner::PyActionRunner::new(workflow_logger.clone(), Arc::clone(&engine));
+        let connector = Box::new(api_caller::APICaller::new(api_logger.clone()));
 
-    #[cfg(feature = "javascript")]
-    let js_runner =
-        javascript_runner::JsActionRunner::new(Arc::clone(&engine), workflow_logger.clone());
+        #[cfg(feature = "python")]
+        let py_runner =
+            python_runner::PyActionRunner::new(workflow_logger.clone(), Arc::clone(&weak_handle));
 
-    #[cfg(feature = "workflow")]
-    let workflow_adapter =
-        workflow_runner::WorkflowAdapter::spawn(Arc::clone(&engine), workflow_logger.clone());
+        #[cfg(feature = "javascript")]
+        let js_runner = javascript_runner::JsActionRunner::new(
+            Arc::clone(&weak_handle),
+            workflow_logger.clone(),
+        );
 
-    #[cfg(feature = "workflow")]
-    let async_connector = Arc::new(api_caller::AsyncAPICaller::new(api_logger));
+        #[cfg(feature = "workflow")]
+        let workflow_adapter = workflow_runner::WorkflowAdapter::spawn(
+            Arc::clone(&weak_handle),
+            workflow_logger.clone(),
+        );
 
-    #[cfg(feature = "wrapper")]
-    let api_wrapper =
-        filtered_runner::APIWrapper::new(workflow_logger.clone(), Arc::clone(&engine));
+        #[cfg(feature = "workflow")]
+        let async_connector = Arc::new(api_caller::AsyncAPICaller::new(api_logger));
 
-    {
-        let mut engine = engine
-            .write()
-            .map_err(|e| anyhow!("Unable to setup execution engine...: {e}"))?;
+        #[cfg(feature = "wrapper")]
+        let api_wrapper =
+            filtered_runner::APIWrapper::new(workflow_logger.clone(), Arc::clone(&weak_handle));
+
         engine.register_connector(connector);
 
         #[cfg(feature = "python")]
@@ -548,8 +507,11 @@ fn construct_execution_engine(
 
         #[cfg(feature = "wrapper")]
         engine.register_filtered_runner(Box::new(api_wrapper));
-    };
 
+        engine
+    });
+
+    let engine: Arc<dyn execution_engine::EngineService> = engine;
     Ok(engine)
 }
 
@@ -631,8 +593,7 @@ async fn main() -> anyhow::Result<()> {
         .await??
     };
 
-    let engine_service: Arc<dyn execution_engine::EngineService> = Arc::new(LockedEngine(engine));
-    let engine = ApiDaemon::new(repos, paths, engine_service, response_store);
+    let engine = ApiDaemon::new(repos, paths, engine, response_store);
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
     tracing::info!(%addr, "starting server");

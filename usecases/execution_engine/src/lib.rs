@@ -66,11 +66,9 @@ pub struct Engine {
     /// [`Engine::run_workflow`], never by the synchronous [`Engine::run`] -
     /// see [`WorkflowRunner`]'s docs for why.
     ///
-    /// `Arc`, not `Box`: [`Engine::resolve_workflow`] clones this out from
-    /// behind whatever lock wraps the `Engine` (e.g. `apid`'s
-    /// `Arc<std::sync::RwLock<Engine>>`) so the caller can drop that lock
-    /// before `.await`-ing the runner - a `Box` couldn't be cloned out this
-    /// way.
+    /// `Arc`, not `Box`: [`Engine::resolve_workflow`] clones this out so the
+    /// caller can `.await` the runner without holding a borrow of `self` -
+    /// a `Box` couldn't be cloned out this way.
     workflow_runner: Option<Arc<dyn WorkflowRunner>>,
 
     /// Handles `Swagger` operations without blocking a thread, if
@@ -82,12 +80,15 @@ pub struct Engine {
 }
 
 /// A primary/driving port: the behavioral surface a driving adapter (e.g.
-/// `apid`'s gRPC handlers) calls once an [`Engine`] has been fully built and
-/// every adapter registered. Unlike [`services`]' traits - which [`Engine`]
-/// itself calls *out* through to a registered adapter - this one is
-/// implemented *by* [`Engine`] and called *into* by whoever is driving it,
-/// so a caller can depend on this interface instead of the concrete
-/// [`Engine`] type.
+/// `apid`'s gRPC handlers, or a `runners/*` adapter's own bindings calling
+/// back in for a nested operation) calls once an [`Engine`] has been fully
+/// built and every adapter registered. Unlike [`services`]' traits - which
+/// [`Engine`] itself calls *out* through to a registered adapter - this one
+/// is implemented *by* [`Engine`] and called *into* by whoever is driving
+/// it, so a caller can depend on this interface instead of the concrete
+/// [`Engine`] type. See [`WeakEngine`] for the shared, non-owning adapter
+/// every such caller uses to get one of these during [`Engine`]'s own
+/// construction, without creating a reference cycle.
 pub trait EngineService: Send + Sync {
     /// See [`Engine::run`].
     ///
@@ -119,6 +120,26 @@ pub trait EngineService: Send + Sync {
         String,
         core_entities::service::WorkflowService,
         Arc<dyn WorkflowRunner>,
+    )>;
+
+    /// See [`Engine::resolve_data_connector`].
+    ///
+    /// # Errors
+    #[allow(
+        clippy::type_complexity,
+        reason = "mirrors Engine::resolve_data_connector's own return shape"
+    )]
+    fn resolve_data_connector(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
+        Arc<dyn AsyncDataConnectionRunner>,
     )>;
 }
 
@@ -442,16 +463,14 @@ impl Engine {
     /// the fully **owned** pieces (`service_name`, `operation_name`, the
     /// manifest's cloned `WorkflowService`, and the registered
     /// `WorkflowRunner` cloned out of its `Arc`) a caller needs to run it -
-    /// entirely synchronously, with every lock this method touches (the
-    /// `lookup` mutex, and whatever lock wraps the `Engine` itself in the
-    /// caller, e.g. `apid`'s `Arc<std::sync::RwLock<Engine>>`) dropped
-    /// before it returns.
+    /// entirely synchronously, with every lock this method touches (just
+    /// the `lookup` mutex) dropped before it returns.
     ///
     /// This split exists so a caller can `.await` the returned runner with
-    /// *zero* locks held across the await point: holding a
-    /// `std::sync::RwLockReadGuard` (which is `!Send`) across an `.await`
-    /// makes the containing future non-`Send`, which fails to compile under
-    /// `tonic`'s `#[tonic::async_trait]`-generated service methods. See
+    /// *zero* locks held across the await point: holding a lock guard
+    /// (which is typically `!Send`) across an `.await` makes the containing
+    /// future non-`Send`, which fails to compile under `tonic`'s
+    /// `#[tonic::async_trait]`-generated service methods. See
     /// [`WorkflowRunner`]'s docs for the broader reasoning.
     ///
     /// # Errors
@@ -703,6 +722,110 @@ impl EngineService for Engine {
         Arc<dyn WorkflowRunner>,
     )> {
         self.resolve_workflow(identifier, context)
+    }
+
+    #[inline]
+    fn resolve_data_connector(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
+        Arc<dyn AsyncDataConnectionRunner>,
+    )> {
+        self.resolve_data_connector(identifier, context)
+    }
+}
+
+/// Adapts a non-owning `Weak<Engine>` to [`EngineService`]'s `&self`
+/// contract by upgrading and delegating.
+///
+/// Every `runners/*` adapter that calls back into the engine for a nested
+/// operation needs a handle to it *before* the engine has finished having
+/// every adapter registered - `apid`'s composition root builds every
+/// adapter (including this handle) *during* [`Engine`]'s own construction,
+/// via [`Arc::new_cyclic`]. A plain `Arc<Engine>` handed to each adapter at
+/// that point would be a strong reference cycle: `Engine` owns each adapter
+/// (as a boxed [`services::CodeRunner`]/etc.), and each adapter would hold a
+/// strong reference straight back to the same `Engine` allocation - neither
+/// could ever be freed. `Weak` doesn't count toward the strong reference
+/// count, so it carries no ownership and creates no cycle: `Engine` has
+/// exactly one real (strong) owner - whoever holds the `Arc<Engine>`
+/// `Arc::new_cyclic` returns - and every adapter's handle back to it is
+/// non-owning. `upgrade()` only fails if that real owner has gone away,
+/// which for `apid` doesn't happen before process exit.
+pub struct WeakEngine(std::sync::Weak<Engine>);
+
+impl WeakEngine {
+    /// Creates a [`WeakEngine`] wrapping `engine`.
+    #[must_use]
+    #[inline]
+    pub fn new(engine: std::sync::Weak<Engine>) -> Self {
+        Self(engine)
+    }
+}
+
+impl EngineService for WeakEngine {
+    #[inline]
+    fn run(
+        &self,
+        identifier: &str,
+        params: Value,
+        options: Value,
+        context: &EngineInputContext,
+    ) -> error::Result<Value> {
+        self.0
+            .upgrade()
+            .expect("Engine outlives every adapter holding a WeakEngine handle to it")
+            .run(identifier, params, options, context)
+    }
+
+    #[inline]
+    fn is_workflow_operation(&self, identifier: &str, context: &EngineInputContext) -> bool {
+        self.0
+            .upgrade()
+            .expect("Engine outlives every adapter holding a WeakEngine handle to it")
+            .is_workflow_operation(identifier, context)
+    }
+
+    #[inline]
+    fn resolve_workflow(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::WorkflowService,
+        Arc<dyn WorkflowRunner>,
+    )> {
+        self.0
+            .upgrade()
+            .expect("Engine outlives every adapter holding a WeakEngine handle to it")
+            .resolve_workflow(identifier, context)
+    }
+
+    #[inline]
+    fn resolve_data_connector(
+        &self,
+        identifier: &str,
+        context: &EngineInputContext,
+    ) -> error::Result<(
+        String,
+        String,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
+        Arc<dyn AsyncDataConnectionRunner>,
+    )> {
+        self.0
+            .upgrade()
+            .expect("Engine outlives every adapter holding a WeakEngine handle to it")
+            .resolve_data_connector(identifier, context)
     }
 }
 

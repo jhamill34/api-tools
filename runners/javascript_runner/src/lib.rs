@@ -8,10 +8,7 @@ pub mod error;
 
 use mini_v8::MiniV8;
 
-use std::{
-    cell::RefCell,
-    sync::{Arc, RwLock},
-};
+use std::{cell::RefCell, sync::Arc};
 
 use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;
@@ -103,14 +100,14 @@ pub struct JsActionRunner {
     logger: LogWriter,
 
     /// The engine used to resolve `api.run` calls made from JavaScript.
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
 }
 
 impl JsActionRunner {
     /// Creates a [`JsActionRunner`] that dispatches nested calls through
     /// `engine` and logs them to `logger`.
     #[inline]
-    pub fn new(engine: Arc<RwLock<execution_engine::Engine>>, logger: LogWriter) -> Self {
+    pub fn new(engine: Arc<dyn execution_engine::EngineService>, logger: LogWriter) -> Self {
         Self { logger, engine }
     }
 
@@ -150,11 +147,6 @@ impl JsActionRunner {
                 serde_json::Value::Null
             };
 
-            let engine = engine.read().map_err(|err| {
-                mini_v8::Error::ExternalError(Box::new(error::JsActionRunner::PoisonedLock(
-                    err.to_string(),
-                )))
-            })?;
             let context = execution_engine::services::EngineInputContext::new(
                 Some(name.clone()),
                 execution_id.clone(),

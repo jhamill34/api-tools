@@ -38,7 +38,7 @@
 //!   call via its own `tokio::task::spawn_blocking(...).await` - the same
 //!   class of bridge #74 called out as necessary, and (per #74's own note)
 //!   an easier one to get right than a pure Lua-to-Lua step: the
-//!   `spawn_blocking` closure only touches `Arc<RwLock<Engine>>`/owned
+//!   `spawn_blocking` closure only touches `Arc<dyn EngineService>`/owned
 //!   JSON, no Lua state, so it really is `Send + 'static`.
 //! - `api.call(id, params, options)` (#75): the genuinely async sibling,
 //!   for `Swagger`-kind manifests only. Dispatches directly through the
@@ -49,10 +49,7 @@
 //!   manifest kind, so a script author's choice between the two bindings
 //!   is explicit rather than silently downgraded.
 
-use std::{
-    sync::{Arc, PoisonError, RwLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use core_entities::service::WorkflowService as WorkflowManifest;
 use execution_engine::{
@@ -91,14 +88,15 @@ pub struct WorkflowAdapter {
 impl WorkflowAdapter {
     /// Spawns the dedicated workflow-dispatch thread and returns an
     /// adapter that sends work to it. `engine` is the same
-    /// `Arc<RwLock<Engine>>` `apid` dispatches every other operation
-    /// through - it's what the `api.run` binding bridges into. The thread
-    /// runs for the lifetime of the process (detached, not joined) - it
-    /// exits on its own once every [`WorkflowAdapter`] clone/reference
-    /// holding its sender is dropped and the channel closes.
+    /// `Arc<dyn EngineService>` `apid` dispatches every other operation
+    /// through - it's what the `api.run`/`api.call` bindings bridge into.
+    /// The thread runs for the lifetime of the process (detached, not
+    /// joined) - it exits on its own once every [`WorkflowAdapter`]
+    /// clone/reference holding its sender is dropped and the channel
+    /// closes.
     #[must_use]
     pub fn spawn(
-        engine: Arc<RwLock<execution_engine::Engine>>,
+        engine: Arc<dyn execution_engine::EngineService>,
         logger: common_data_structures::log_writer::LogWriter,
     ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -118,7 +116,7 @@ impl WorkflowAdapter {
 /// boundary.
 fn run_dispatch_thread(
     mut receiver: mpsc::UnboundedReceiver<WorkflowRequest>,
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
 ) {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -148,7 +146,7 @@ fn run_dispatch_thread(
 /// entirely on the dedicated `LocalSet` thread - see the module docs.
 async fn run_one_workflow(
     request: &WorkflowRequest,
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
 ) -> execution_engine::error::Result<Value> {
     let manifest = &request.manifest;
@@ -203,7 +201,7 @@ fn install_api_run_binding(
     workflow_engine: &workflow_engine::WorkflowEngine,
     service_name: String,
     execution_id: String,
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
 ) -> workflow_engine::error::Result<()> {
     workflow_engine.register_api_function("run", move |lua, args: mlua::MultiValue| {
@@ -231,13 +229,11 @@ fn install_api_run_binding(
             let context =
                 EngineInputContext::new(Some(service_name.clone()), execution_id.clone(), false);
 
-            let result = tokio::task::spawn_blocking(move || {
-                let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
-                engine.run(&id, params, options, &context)
-            })
-            .await
-            .map_err(|join_err| mlua::Error::ExternalError(Arc::new(join_err)))?
-            .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
+            let result =
+                tokio::task::spawn_blocking(move || engine.run(&id, params, options, &context))
+                    .await
+                    .map_err(|join_err| mlua::Error::ExternalError(Arc::new(join_err)))?
+                    .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
 
             lua.to_value(&result)
         }
@@ -258,7 +254,7 @@ fn install_api_call_binding(
     workflow_engine: &workflow_engine::WorkflowEngine,
     service_name: String,
     execution_id: String,
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
 ) -> workflow_engine::error::Result<()> {
     workflow_engine.register_api_function("call", move |lua, args: mlua::MultiValue| {
         let engine = Arc::clone(&engine);
@@ -278,11 +274,9 @@ fn install_api_call_binding(
             let context =
                 EngineInputContext::new(Some(service_name.clone()), execution_id.clone(), false);
 
-            let (resolved_service, operation_name, manifest, api, creds, connector) = {
-                let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
-                engine.resolve_data_connector(&id, &context)
-            }
-            .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
+            let (resolved_service, operation_name, manifest, api, creds, connector) = engine
+                .resolve_data_connector(&id, &context)
+                .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
 
             let bundle = DataConnectorBundle::new(&manifest, &api, creds.as_ref());
             let result = connector
@@ -360,11 +354,11 @@ mod tests {
         }
     }
 
-    fn empty_engine() -> Arc<RwLock<execution_engine::Engine>> {
+    fn empty_engine() -> Arc<dyn execution_engine::EngineService> {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(EmptyLookup);
-        Arc::new(RwLock::new(execution_engine::Engine::new(lookup, logger)))
+        Arc::new(execution_engine::Engine::new(lookup, logger))
     }
 
     #[tokio::test]
@@ -514,18 +508,13 @@ mod tests {
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
             Arc::new(SingleServiceLookup(swagger_service()));
-        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
-            lookup,
-            logger.clone(),
-        )));
+        let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 
         let calls = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut engine = engine.write().unwrap();
-            engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
-                calls: Arc::clone(&calls),
-            }));
-        }
+        engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+            calls: Arc::clone(&calls),
+        }));
+        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
         let mut manifest = core_entities::service::WorkflowService::new();
         manifest.set_codeString("return api.call('other.op', { hello = 'world' })".to_owned());
@@ -552,18 +541,13 @@ mod tests {
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
             Arc::new(SingleServiceLookup(simple_code_service()));
-        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
-            lookup,
-            logger.clone(),
-        )));
+        let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 
         let calls = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut engine = engine.write().unwrap();
-            engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
-                calls: Arc::clone(&calls),
-            }));
-        }
+        engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
+            calls: Arc::clone(&calls),
+        }));
+        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
         let mut manifest = core_entities::service::WorkflowService::new();
         manifest.set_codeString(
@@ -593,21 +577,16 @@ mod tests {
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
             Arc::new(SingleServiceLookup(simple_code_service()));
-        let engine = Arc::new(RwLock::new(execution_engine::Engine::new(
-            lookup,
-            logger.clone(),
-        )));
+        let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 
         let calls = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut engine = engine.write().unwrap();
-            engine.register_language(
-                "js",
-                Box::new(FakeCodeRunner {
-                    calls: Arc::clone(&calls),
-                }),
-            );
-        }
+        engine.register_language(
+            "js",
+            Box::new(FakeCodeRunner {
+                calls: Arc::clone(&calls),
+            }),
+        );
+        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
         let mut manifest = core_entities::service::WorkflowService::new();
         manifest.set_codeString("return api.run('other.op', { hello = 'world' })".to_owned());
