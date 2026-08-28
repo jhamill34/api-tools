@@ -12,7 +12,7 @@ use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
 use services::{
     AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
-    EngineInputContext, EngineLookup, FilteredRunner, InputPrompter, ScriptRunner, WorkflowRunner,
+    EngineInputContext, EngineLookup, FilteredRunner, ScriptRunner, WorkflowRunner,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -62,9 +62,6 @@ pub struct Engine {
     /// Handles `ApiWrapped` operations, if registered.
     filtered_runner: Option<Box<dyn FilteredRunner + Send + Sync>>,
 
-    /// Handles the built-in `$input` operation, if registered.
-    input_handler: Option<Box<dyn InputPrompter + Send + Sync>>,
-
     /// Handles `Workflow` operations, if registered. Dispatched to only by
     /// [`Engine::run_workflow`], never by the synchronous [`Engine::run`] -
     /// see [`WorkflowRunner`]'s docs for why.
@@ -96,7 +93,6 @@ impl Engine {
             code_runners: HashMap::new(),
             script_runner: None,
             filtered_runner: None,
-            input_handler: None,
             workflow_runner: None,
             async_connector: None,
         }
@@ -125,12 +121,6 @@ impl Engine {
     #[inline]
     pub fn register_connector(&mut self, runner: Box<dyn DataConnectionRunner + Send + Sync>) {
         self.connector = Some(runner);
-    }
-
-    /// Registers the [`InputPrompter`].
-    #[inline]
-    pub fn register_input(&mut self, handler: Box<dyn InputPrompter + Send + Sync>) {
-        self.input_handler = Some(handler);
     }
 
     /// Registers the [`WorkflowRunner`].
@@ -164,9 +154,7 @@ impl Engine {
         Ok((service_name, operation_name))
     }
 
-    /// Resolves `identifier` (or dispatches directly to the registered
-    /// [`InputPrompter`] for the built-in
-    /// `"$input"` identifier), looks up the target service and its
+    /// Resolves `identifier`, looks up the target service and its
     /// credentials, then dispatches to whichever output port matches the
     /// manifest's type (`Swagger` → connector, `Action`/`SimpleCode` →
     /// code runner, `ApiWrapped` → filtered runner). Wraps a non-array
@@ -182,16 +170,6 @@ impl Engine {
         options: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
-        if identifier == "$input" {
-            if let Some(input_handler) = &self.input_handler {
-                return input_handler.run(params, context);
-            }
-
-            return Err(error::ExecutionEngine::Unimplemented(
-                "Input Handler".into(),
-            ));
-        }
-
         let (service_name, operation_name) =
             Self::parse_identifier(identifier, context.parent.as_deref())?;
 

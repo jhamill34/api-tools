@@ -8,7 +8,6 @@ service Engine {
 	rpc SaveService(SaveServiceRequest) returns (SaveServiceResponse); 
 	rpc RunService(RunServiceRequest) returns (RunServiceResponse);
 	rpc GetRunResult(GetRunResultRequest) returns (GetRunResultResponse);
-	rpc ProvideInput(ProvideInputRequest) returns (ProvideInputResponse);
 }
 
 message ListRequest { }
@@ -65,11 +64,4 @@ message GetRunResultResponse {
 	STATUS status = 5;
 	optional string output = 6;
 }
-
-message ProvideInputRequest {
-	string execution_id = 1;
-	string input = 2;
-}
-
-message ProvideInputResponse {}
 

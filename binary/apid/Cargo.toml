@@ -34,7 +34,6 @@ local_file_loader = { path = "../../storage/local_file_loader" }
 api_caller = { path = "../../runners/api_caller" }
 python_runner = { path = "../../runners/python_runner" }
 javascript_runner = { path = "../../runners/javascript_runner" }
-user_input = { path = "../../runners/user_input" }
 filtered_runner = { path = "../../runners/filtered_runner" }
 workflow_runner = { path = "../../runners/workflow_runner" }
 
@@ -52,11 +51,10 @@ tempfile = "3"
 dhat-heap = []
 dhat-ad-hoc = []
 
-default = ["python", "input", "javascript", "wrapper"]
+default = ["python", "javascript", "wrapper"]
 python = []
 javascript = []
 workflow = []
-input = []
 wrapper = []
 
 

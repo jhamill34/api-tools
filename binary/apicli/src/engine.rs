@@ -22,7 +22,7 @@ use core_entities::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
 use engine_entities::engine::{
     engine_client::EngineClient, GetRunResultRequest, GetSerivceRequest, ListRequest,
-    ProvideInputRequest, RunServiceRequest, SaveServiceRequest,
+    RunServiceRequest, SaveServiceRequest,
 };
 use oauth_flow::Authenticator;
 use protobuf::Message;
@@ -238,28 +238,6 @@ impl Cli {
                 println!("Waiting");
             }
         }
-
-        Ok(())
-    }
-
-    /// Answers a run's pending `InputPrompter` prompt with `input` (or
-    /// read from stdin if omitted).
-    pub async fn handle_provide_input(
-        &mut self,
-        execution_id: String,
-        input: Option<String>,
-    ) -> anyhow::Result<()> {
-        let input = if let Some(input) = input {
-            fs::read_to_string(Path::new(&input))?
-        } else {
-            read_lines_from_stdin()?
-        };
-
-        let request = Request::new(ProvideInputRequest {
-            execution_id,
-            input,
-        });
-        let _response = self.client.provide_input(request).await?.into_inner();
 
         Ok(())
     }

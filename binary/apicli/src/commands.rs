@@ -59,16 +59,6 @@ pub enum Commands {
         execution_id: String,
     },
 
-    /// Answers a pending `InputPrompter` prompt for a run that's waiting on
-    /// user input.
-    ProvideInput {
-        /// The execution ID that's waiting on input.
-        execution_id: String,
-
-        /// The JSON answer, or read from stdin if omitted.
-        input: Option<String>,
-    },
-
     /// Prints a sample JSON input payload for an operation.
     InputStub {
         /// The `{service}.{operation}` identifier.
@@ -144,10 +134,6 @@ impl Commands {
             Self::Run { name, input, limit } => engine.handle_run(name, input, limit).await?,
             Self::RunResult { execution_id } => engine.handle_run_result(execution_id).await?,
             Self::RunStatus { execution_id } => engine.handle_run_status(execution_id).await?,
-            Self::ProvideInput {
-                execution_id,
-                input,
-            } => engine.handle_provide_input(execution_id, input).await?,
             Self::InputStub { name, required } => engine.handle_input_stub(name, required).await?,
             Self::OutputStub { name } => engine.handle_output_stub(name).await?,
             Self::InputPaths { name, required } => {

@@ -50,15 +50,6 @@ pub trait EngineLookup {
     fn get_credentials(&self, id: &str) -> Option<Authentication>;
 }
 
-/// An output port that pauses execution and waits for an external caller
-/// to supply the answer.
-pub trait InputPrompter {
-    /// Prompts with `params` and blocks until an answer is available.
-    ///
-    /// # Errors
-    fn run(&self, params: Value, ctx: &EngineInputContext) -> error::Result<Value>;
-}
-
 /// Everything a [`DataConnectionRunner`] needs to resolve and execute one
 /// API-backed operation.
 #[non_exhaustive]

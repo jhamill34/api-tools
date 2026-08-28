@@ -15,7 +15,7 @@ use std::{
     fs::{self, File},
     panic,
     path::PathBuf,
-    sync::{mpsc::Sender, Arc, Mutex, PoisonError, RwLock},
+    sync::{Arc, Mutex, PoisonError, RwLock},
 };
 
 use anyhow::{anyhow, Context};
@@ -27,8 +27,7 @@ use engine_entities::engine::{
     get_run_result_response,
     list_response::ListItem,
     GetRunResultRequest, GetRunResultResponse, GetSerivceRequest, GetServiceResponse, ListRequest,
-    ListResponse, ProvideInputRequest, ProvideInputResponse, RunServiceRequest, RunServiceResponse,
-    SaveServiceRequest, SaveServiceResponse,
+    ListResponse, RunServiceRequest, RunServiceResponse, SaveServiceRequest, SaveServiceResponse,
 };
 use execution_engine::services::EngineLookup;
 use in_memory_storage::{repo::InMemoryRepository, OperationRepos};
@@ -36,7 +35,6 @@ use local_file_loader::LocalFileFetcher;
 use protobuf::Message;
 use service_writer::ServiceWriter;
 use tonic::{transport::Server, Request, Response, Status};
-use user_input::Signals;
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
@@ -57,10 +55,6 @@ struct ApiDaemon {
 
     /// Results of in-flight and completed runs, keyed by execution ID.
     responses: Arc<Mutex<HashMap<String, GetRunResultResponse>>>,
-
-    /// Pending `InputPrompter` prompts awaiting an answer, shared with the
-    /// registered [`user_input::UserInput`] runner.
-    signals: Signals,
 }
 
 impl ApiDaemon {
@@ -72,14 +66,12 @@ impl ApiDaemon {
         paths: Arc<HashMap<String, PathBuf>>,
         engine: Arc<RwLock<execution_engine::Engine>>,
         responses: Arc<Mutex<HashMap<String, GetRunResultResponse>>>,
-        signals: Signals,
     ) -> Self {
         Self {
             repos,
             paths,
             engine,
             responses,
-            signals,
         }
     }
 }
@@ -240,7 +232,6 @@ impl Engine for ApiDaemon {
 
         let engine = Arc::clone(&self.engine);
         let responses = Arc::clone(&self.responses);
-        let signals = Arc::clone(&self.signals);
         let operation_id = req.id;
 
         // Checked synchronously and briefly, with the lock dropped before
@@ -277,19 +268,14 @@ impl Engine for ApiDaemon {
                     guard.resolve_workflow(&operation_id, &ctx)
                 };
 
-                finish_run_async(
-                    &execution_id.to_string(),
-                    &responses,
-                    &signals,
-                    async move {
-                        let (service_name, operation_name, workflow, workflow_runner) = resolution?;
-                        let result = workflow_runner
-                            .run(&service_name, &operation_name, &workflow, input, &ctx)
-                            .await?;
+                finish_run_async(&execution_id.to_string(), &responses, async move {
+                    let (service_name, operation_name, workflow, workflow_runner) = resolution?;
+                    let result = workflow_runner
+                        .run(&service_name, &operation_name, &workflow, input, &ctx)
+                        .await?;
 
-                        Ok(execution_engine::wrap_result(result, ctx.raw_response))
-                    },
-                )
+                    Ok(execution_engine::wrap_result(result, ctx.raw_response))
+                })
                 .await;
             });
         } else {
@@ -300,7 +286,7 @@ impl Engine for ApiDaemon {
                     false,
                 );
 
-                finish_run(&execution_id.to_string(), &responses, &signals, move || {
+                finish_run(&execution_id.to_string(), &responses, move || {
                     let engine = engine.read().unwrap_or_else(PoisonError::into_inner);
                     engine.run(&operation_id, input, options, &ctx)
                 });
@@ -328,58 +314,17 @@ impl Engine for ApiDaemon {
                 output: None,
             });
 
-        if result.status() == get_run_result_response::Status::Running {
-            let signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
-
-            if let Some(response) = signals.get(&req.execution_id) {
-                match serde_json::to_string_pretty(&response.0) {
-                    Ok(output) => {
-                        return Ok(Response::new(GetRunResultResponse {
-                            status: get_run_result_response::Status::Waiting.into(),
-                            output: Some(output),
-                        }))
-                    }
-                    Err(err) => {
-                        return Ok(Response::new(GetRunResultResponse {
-                            status: get_run_result_response::Status::Waiting.into(),
-                            output: Some(err.to_string()),
-                        }))
-                    }
-                }
-            }
-        }
-
         Ok(Response::new(result))
-    }
-
-    async fn provide_input(
-        &self,
-        req: Request<ProvideInputRequest>,
-    ) -> Result<Response<ProvideInputResponse>, Status> {
-        let req = req.into_inner();
-
-        let mut signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, tx)) = signals.get_mut(&req.execution_id) {
-            let value = serde_json::from_str::<serde_json::Value>(&req.input);
-            if let Ok(value) = value {
-                tx.send(value).map_err(|e| {
-                    Status::data_loss(format!("Unable to send user input for this execution: {e}"))
-                })?;
-            }
-        }
-
-        Ok(Response::new(ProvideInputResponse {}))
     }
 }
 
 /// Runs `task`, converts its result into a [`GetRunResultResponse`], and
-/// records it under `execution_id` in `responses` before always removing
-/// the matching `signals` entry — even when `task` panics, so a failing
-/// run never leaves its status stuck at `Running` forever.
+/// records it under `execution_id` in `responses` — even when `task`
+/// panics, so a failing run never leaves its status stuck at `Running`
+/// forever.
 fn finish_run<F>(
     execution_id: &str,
     responses: &Mutex<HashMap<String, GetRunResultResponse>>,
-    signals: &Signals,
     task: F,
 ) where
     F: FnOnce() -> execution_engine::error::Result<serde_json::Value> + panic::UnwindSafe,
@@ -401,20 +346,14 @@ fn finish_run<F>(
         output: Some(output),
     };
 
-    {
-        let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
-        responses.insert(execution_id.to_owned(), result);
-    }
-
-    let mut signals = signals.lock().unwrap_or_else(PoisonError::into_inner);
-    signals.remove(execution_id);
+    let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
+    responses.insert(execution_id.to_owned(), result);
 }
 
 /// The async sibling of [`finish_run`]: awaits `task`, converts its result
 /// into a [`GetRunResultResponse`], and records it under `execution_id` in
-/// `responses` before always removing the matching `signals` entry - even
-/// when `task` panics, so a failing workflow run never leaves its status
-/// stuck at `Running` forever.
+/// `responses` - even when `task` panics, so a failing workflow run never
+/// leaves its status stuck at `Running` forever.
 ///
 /// `task` runs inside its own `tokio::spawn`ed task (rather than being
 /// awaited directly) so a panic inside it surfaces as a `JoinError` here
@@ -423,7 +362,6 @@ fn finish_run<F>(
 async fn finish_run_async<F>(
     execution_id: &str,
     responses: &Mutex<HashMap<String, GetRunResultResponse>>,
-    signals: &Signals,
     task: F,
 ) where
     F: std::future::Future<Output = execution_engine::error::Result<serde_json::Value>>
@@ -451,13 +389,8 @@ async fn finish_run_async<F>(
         output: Some(output),
     };
 
-    {
-        let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
-        responses.insert(execution_id.to_owned(), result);
-    }
-
-    let mut signals = signals.lock().unwrap_or_else(PoisonError::into_inner);
-    signals.remove(execution_id);
+    let mut responses = responses.lock().unwrap_or_else(PoisonError::into_inner);
+    responses.insert(execution_id.to_owned(), result);
 }
 
 /// Extracts a human-readable message from a caught panic payload, falling
@@ -497,10 +430,9 @@ impl EngineLookup for LockedLookup {
 
 /// Builds an [`execution_engine::Engine`] backed by `lookup`, and registers
 /// every adapter enabled by this build's Cargo features (the API-call
-/// connector is always registered; Python/JavaScript/Lua code runners,
-/// the user-input handler, and the filtered-runner wrapper are each
-/// gated behind their own feature flag — `lua` isn't in this build's
-/// `default` set yet).
+/// connector is always registered; Python/JavaScript/Lua code runners and
+/// the filtered-runner wrapper are each gated behind their own feature
+/// flag — `lua` isn't in this build's `default` set yet).
 ///
 /// Does blocking work (`reqwest::blocking::Client::new()` internally
 /// spins up its own tokio runtime, which cannot be constructed or torn
@@ -508,7 +440,6 @@ impl EngineLookup for LockedLookup {
 /// main thread must invoke this through `tokio::task::spawn_blocking`.
 fn construct_execution_engine(
     lookup: Arc<dyn EngineLookup + Sync + Send>,
-    signals: Signals,
     workflow_path: &str,
     api_path: &str,
 ) -> anyhow::Result<Arc<RwLock<execution_engine::Engine>>> {
@@ -540,9 +471,6 @@ fn construct_execution_engine(
     #[cfg(feature = "workflow")]
     let async_connector = Arc::new(api_caller::AsyncAPICaller::new(api_logger));
 
-    #[cfg(feature = "input")]
-    let input_handler = Box::new(user_input::UserInput::new(signals));
-
     #[cfg(feature = "wrapper")]
     let api_wrapper =
         filtered_runner::APIWrapper::new(workflow_logger.clone(), Arc::clone(&engine));
@@ -564,9 +492,6 @@ fn construct_execution_engine(
 
         #[cfg(feature = "workflow")]
         engine.register_async_connector(async_connector);
-
-        #[cfg(feature = "input")]
-        engine.register_input(input_handler);
 
         #[cfg(feature = "wrapper")]
         engine.register_filtered_runner(Box::new(api_wrapper));
@@ -640,23 +565,20 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: Shard this to reduce lock contention for concurrent requests
     let response_store = Arc::new(Mutex::new(HashMap::<String, GetRunResultResponse>::new()));
-    let signals = HashMap::<String, (serde_json::Value, Sender<serde_json::Value>)>::new();
-    let signals = Arc::new(Mutex::new(signals));
 
     let engine = {
         let repos = Arc::<Mutex<in_memory_storage::OperationRepos>>::clone(&repos);
         let lookup: Arc<dyn EngineLookup + Sync + Send> = Arc::new(LockedLookup(repos));
-        let signals = Arc::clone(&signals);
         let workflow_path = config.log.workflow_path.clone();
         let api_path = config.log.api_path.clone();
 
         tokio::task::spawn_blocking(move || {
-            construct_execution_engine(lookup, signals, &workflow_path, &api_path)
+            construct_execution_engine(lookup, &workflow_path, &api_path)
         })
         .await??
     };
 
-    let engine = ApiDaemon::new(repos, paths, engine, response_store, signals);
+    let engine = ApiDaemon::new(repos, paths, engine, response_store);
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
     tracing::info!(%addr, "starting server");
@@ -678,25 +600,12 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
-
     use super::*;
 
-    fn empty_state() -> (
-        Mutex<HashMap<String, GetRunResultResponse>>,
-        Signals,
-        String,
-    ) {
+    fn empty_state() -> (Mutex<HashMap<String, GetRunResultResponse>>, String) {
         let responses = Mutex::new(HashMap::new());
 
-        let signals = Arc::new(Mutex::new(HashMap::new()));
-        let (tx, _rx) = mpsc::channel::<serde_json::Value>();
-        signals
-            .lock()
-            .unwrap()
-            .insert("exec-1".to_owned(), (serde_json::Value::Null, tx));
-
-        (responses, signals, "exec-1".to_owned())
+        (responses, "exec-1".to_owned())
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -706,7 +615,6 @@ mod tests {
             Box::new(InMemoryRepository::new()),
         );
         let repos: Arc<dyn EngineLookup + Sync + Send> = Arc::new(repos);
-        let signals: Signals = Arc::new(Mutex::new(HashMap::new()));
 
         let log_dir = tempfile::tempdir().unwrap();
         let workflow_path = log_dir
@@ -726,7 +634,7 @@ mod tests {
         // against (reqwest::blocking::Client::new() cannot construct its
         // own tokio runtime from within an already-running one).
         let result = tokio::task::spawn_blocking(move || {
-            construct_execution_engine(repos, signals, &workflow_path, &api_path)
+            construct_execution_engine(repos, &workflow_path, &api_path)
         })
         .await;
 
@@ -743,9 +651,9 @@ mod tests {
 
     #[test]
     fn finish_run_records_a_completed_response_on_success() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
-        finish_run(&execution_id, &responses, &signals, || {
+        finish_run(&execution_id, &responses, || {
             Ok(serde_json::json!({ "hello": "world" }))
         });
 
@@ -753,18 +661,13 @@ mod tests {
         let result = responses.get(&execution_id).expect("response recorded");
         assert_eq!(result.status(), get_run_result_response::Status::Completed);
         assert!(result.output.as_ref().unwrap().contains("hello"));
-
-        assert!(
-            !signals.lock().unwrap().contains_key(&execution_id),
-            "expected the signal entry to be cleaned up"
-        );
     }
 
     #[test]
     fn finish_run_records_an_error_response_when_the_task_returns_err() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
-        finish_run(&execution_id, &responses, &signals, || {
+        finish_run(&execution_id, &responses, || {
             Err(execution_engine::error::ExecutionEngine::NotFound(
                 "widget".into(),
             ))
@@ -774,18 +677,15 @@ mod tests {
         let result = responses.get(&execution_id).expect("response recorded");
         assert_eq!(result.status(), get_run_result_response::Status::Completed);
         assert!(result.output.as_ref().unwrap().contains("widget"));
-
-        assert!(!signals.lock().unwrap().contains_key(&execution_id));
     }
 
     #[test]
     fn finish_run_does_not_leave_the_response_stuck_at_running_when_the_task_panics() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
         finish_run(
             &execution_id,
             &responses,
-            &signals,
             || -> execution_engine::error::Result<serde_json::Value> {
                 panic!("boom");
             },
@@ -801,18 +701,13 @@ mod tests {
             "a panicking run must be reported as Completed (with an error), not left Running forever"
         );
         assert!(result.output.as_ref().unwrap().contains("boom"));
-
-        assert!(
-            !signals.lock().unwrap().contains_key(&execution_id),
-            "expected the signal entry to be cleaned up even when the task panics"
-        );
     }
 
     #[tokio::test]
     async fn finish_run_async_records_a_completed_response_on_success() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
-        finish_run_async(&execution_id, &responses, &signals, async {
+        finish_run_async(&execution_id, &responses, async {
             Ok(serde_json::json!({ "hello": "world" }))
         })
         .await;
@@ -821,18 +716,13 @@ mod tests {
         let result = responses.get(&execution_id).expect("response recorded");
         assert_eq!(result.status(), get_run_result_response::Status::Completed);
         assert!(result.output.as_ref().unwrap().contains("hello"));
-
-        assert!(
-            !signals.lock().unwrap().contains_key(&execution_id),
-            "expected the signal entry to be cleaned up"
-        );
     }
 
     #[tokio::test]
     async fn finish_run_async_records_an_error_response_when_the_task_returns_err() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
-        finish_run_async(&execution_id, &responses, &signals, async {
+        finish_run_async(&execution_id, &responses, async {
             Err(execution_engine::error::ExecutionEngine::NotFound(
                 "widget".into(),
             ))
@@ -843,18 +733,13 @@ mod tests {
         let result = responses.get(&execution_id).expect("response recorded");
         assert_eq!(result.status(), get_run_result_response::Status::Completed);
         assert!(result.output.as_ref().unwrap().contains("widget"));
-
-        assert!(!signals.lock().unwrap().contains_key(&execution_id));
     }
 
     #[tokio::test]
     async fn finish_run_async_does_not_leave_the_response_stuck_at_running_when_the_task_panics() {
-        let (responses, signals, execution_id) = empty_state();
+        let (responses, execution_id) = empty_state();
 
-        finish_run_async(&execution_id, &responses, &signals, async {
-            panic!("boom")
-        })
-        .await;
+        finish_run_async(&execution_id, &responses, async { panic!("boom") }).await;
 
         let responses = responses.lock().unwrap();
         let result = responses
@@ -866,10 +751,5 @@ mod tests {
             "a panicking run must be reported as Completed (with an error), not left Running forever"
         );
         assert!(result.output.as_ref().unwrap().contains("boom"));
-
-        assert!(
-            !signals.lock().unwrap().contains_key(&execution_id),
-            "expected the signal entry to be cleaned up even when the task panics"
-        );
     }
 }
