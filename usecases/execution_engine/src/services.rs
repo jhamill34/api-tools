@@ -1,11 +1,11 @@
 //! Output-port traits an [`Engine`](crate::Engine) dispatches manifest
 //! steps to, and the shared types they're called with.
 
-use core_entities::service::{
+use core_entities::entity::{
     APIWrappedService, CommonApi, ScriptedAction, SwaggerService, VersionedServiceTree,
     WorkflowService,
 };
-use credential_entities::credentials::Authentication;
+use credential_entities::entity::Authentication;
 use serde_json::Value;
 
 use crate::error;

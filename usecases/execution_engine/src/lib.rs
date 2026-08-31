@@ -17,7 +17,7 @@ use services::{
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::offset::Local;
-use core_entities::service::{code_resource::Language, service_manifest_latest};
+use core_entities::entity::{code_resource::Language, service_manifest_latest};
 
 /// Wraps a non-array `result` in a single-element array unless
 /// `raw_response` is set - the shared tail behavior of [`Engine::run`] and
@@ -118,7 +118,7 @@ pub trait EngineService: Send + Sync {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::WorkflowService,
+        core_entities::entity::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )>;
 
@@ -136,9 +136,9 @@ pub trait EngineService: Send + Sync {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::SwaggerService,
-        core_entities::service::CommonApi,
-        Option<credential_entities::credentials::Authentication>,
+        core_entities::entity::SwaggerService,
+        core_entities::entity::CommonApi,
+        Option<credential_entities::entity::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )>;
 }
@@ -242,13 +242,13 @@ impl Engine {
         let credentials = self.lookup.get_credentials(service_name);
 
         let service = service.v1();
-        let manifest = service.manifest.v2();
+        let manifest = service.manifest_latest();
 
         let result = match &manifest.value {
             Some(service_manifest_latest::Value::Swagger(swagger)) => self.dispatch_swagger(
                 service_name,
                 operation_name,
-                service,
+                &service,
                 swagger,
                 credentials,
                 params,
@@ -259,7 +259,7 @@ impl Engine {
                 identifier,
                 service_name,
                 operation_name,
-                service,
+                &service,
                 action,
                 params,
                 context,
@@ -300,15 +300,16 @@ impl Engine {
         &self,
         service_name: &str,
         operation_name: &str,
-        service: &core_entities::service::versioned_service_tree::V1,
-        swagger: &core_entities::service::SwaggerService,
-        credentials: Option<credential_entities::credentials::Authentication>,
+        service: &core_entities::entity::versioned_service_tree::V1,
+        swagger: &core_entities::entity::SwaggerService,
+        credentials: Option<credential_entities::entity::Authentication>,
         params: Value,
         options: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
         if let Some(connector) = &self.connector {
-            let api = &service.commonApi;
+            let default_api = core_entities::entity::CommonApi::default();
+            let api = service.common_api.as_ref().unwrap_or(&default_api);
             let creds = credentials.as_ref();
 
             let bundle = DataConnectorBundle {
@@ -344,8 +345,8 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        service: &core_entities::service::versioned_service_tree::V1,
-        action: &core_entities::service::ActionService,
+        service: &core_entities::entity::versioned_service_tree::V1,
+        action: &core_entities::entity::ActionService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
@@ -354,14 +355,18 @@ impl Engine {
             .iter()
             .find(|item| item.id == *operation_name);
         if let Some(operation) = operation {
-            let operation = operation.function();
+            let Some(operation) = &operation.function else {
+                return Err(error::ExecutionEngine::NotFound(format!(
+                    "Action operation {operation_name}"
+                )));
+            };
 
-            let path = format!("{}/{}", action.source, operation.js());
+            let path = format!("{}/{}", action.source, operation.js.as_deref().unwrap_or(""));
 
             let source = service
                 .resources
                 .iter()
-                .find(|item| item.relativePath == path)
+                .find(|item| item.relative_path == path)
                 .ok_or(error::ExecutionEngine::NotFound(format!(
                     "Source file for {service_name}.{operation_name}"
                 )))?;
@@ -399,7 +404,7 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        api_wrapped: &core_entities::service::APIWrappedService,
+        api_wrapped: &core_entities::entity::APIWrappedService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
@@ -425,26 +430,27 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        simple_code: &core_entities::service::SimpleCodeService,
+        simple_code: &core_entities::entity::SimpleCodeService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
-        match simple_code.code.language.enum_value() {
-            Ok(Language::PYTHON) => self.dispatch_code_runner(
+        let code = simple_code.code.as_ref();
+        match code.map(|c| c.language) {
+            Some(Language::Python) => self.dispatch_code_runner(
                 identifier,
                 service_name,
                 operation_name,
                 "python",
-                simple_code.code.codeString(),
+                code.map_or("", core_entities::entity::CodeResource::code_string),
                 params,
                 context,
             ),
-            Ok(Language::JAVASCRIPT) => self.dispatch_code_runner(
+            Some(Language::Javascript) => self.dispatch_code_runner(
                 identifier,
                 service_name,
                 operation_name,
                 "js",
-                simple_code.code.codeString(),
+                code.map_or("", core_entities::entity::CodeResource::code_string),
                 params,
                 context,
             ),
@@ -484,7 +490,7 @@ impl Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::WorkflowService,
+        core_entities::entity::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         let (service_name, operation_name) =
@@ -495,7 +501,7 @@ impl Engine {
             .get_service(service_name)
             .ok_or_else(|| error::ExecutionEngine::NotFound(identifier.into()))?;
         let service = service.v1();
-        let manifest = service.manifest.v2();
+        let manifest = service.manifest_latest();
 
         match &manifest.value {
             Some(service_manifest_latest::Value::Workflow(workflow)) => {
@@ -574,7 +580,7 @@ impl Engine {
         };
 
         let service = service.v1();
-        let manifest = service.manifest.v2();
+        let manifest = service.manifest_latest();
 
         matches!(
             &manifest.value,
@@ -607,9 +613,9 @@ impl Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::SwaggerService,
-        core_entities::service::CommonApi,
-        Option<credential_entities::credentials::Authentication>,
+        core_entities::entity::SwaggerService,
+        core_entities::entity::CommonApi,
+        Option<credential_entities::entity::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         let (service_name, operation_name) =
@@ -622,7 +628,7 @@ impl Engine {
         let credentials = self.lookup.get_credentials(service_name);
 
         let service = service.v1();
-        let manifest = service.manifest.v2();
+        let manifest = service.manifest_latest();
 
         match &manifest.value {
             Some(service_manifest_latest::Value::Swagger(swagger)) => {
@@ -633,8 +639,8 @@ impl Engine {
                 Ok((
                     service_name.to_owned(),
                     operation_name.to_owned(),
-                    swagger.clone(),
-                    (*service.commonApi).clone(),
+                    (**swagger).clone(),
+                    service.common_api.clone().unwrap_or_default(),
                     credentials,
                     async_connector,
                 ))
@@ -718,7 +724,7 @@ impl EngineService for Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::WorkflowService,
+        core_entities::entity::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         self.resolve_workflow(identifier, context)
@@ -732,9 +738,9 @@ impl EngineService for Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::SwaggerService,
-        core_entities::service::CommonApi,
-        Option<credential_entities::credentials::Authentication>,
+        core_entities::entity::SwaggerService,
+        core_entities::entity::CommonApi,
+        Option<credential_entities::entity::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         self.resolve_data_connector(identifier, context)
@@ -800,7 +806,7 @@ impl EngineService for WeakEngine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::WorkflowService,
+        core_entities::entity::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         self.0
@@ -817,9 +823,9 @@ impl EngineService for WeakEngine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::service::SwaggerService,
-        core_entities::service::CommonApi,
-        Option<credential_entities::credentials::Authentication>,
+        core_entities::entity::SwaggerService,
+        core_entities::entity::CommonApi,
+        Option<credential_entities::entity::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         self.0
@@ -831,6 +837,12 @@ impl EngineService for WeakEngine {
 
 #[cfg(test)]
 mod tests {
+    use core_entities::entity::{
+        code_resource, service_manifest, service_manifest_latest, versioned_service_tree,
+        workflow_service, CodeResource, CommonApi, ServiceManifest, ServiceManifestLatest,
+        SimpleCodeService, VersionedServiceTree, WorkflowService,
+    };
+
     use super::*;
 
     #[test]
@@ -867,14 +879,14 @@ mod tests {
     struct FakeLookup;
 
     impl EngineLookup for FakeLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
             None
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::credentials::Authentication> {
+        ) -> Option<credential_entities::entity::Authentication> {
             None
         }
     }
@@ -907,29 +919,40 @@ mod tests {
 
     /// Builds a [`VersionedServiceTree`] wrapping a single `Workflow`
     /// manifest with `code` as its Lua source.
-    fn workflow_service(code: &str) -> core_entities::service::VersionedServiceTree {
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest
-            .mut_v2()
-            .mut_workflow()
-            .set_codeString(code.to_owned());
-
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
-        tree
+    fn workflow_service_tree(code: &str) -> VersionedServiceTree {
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::Workflow(
+                                WorkflowService {
+                                    source: Some(workflow_service::Source::CodeString(
+                                        code.to_owned(),
+                                    )),
+                                    ..Default::default()
+                                },
+                            )),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                },
+            )),
+        }
     }
 
-    struct WorkflowLookup(core_entities::service::VersionedServiceTree);
+    struct WorkflowLookup(core_entities::entity::VersionedServiceTree);
 
     impl EngineLookup for WorkflowLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
             Some(self.0.clone())
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::credentials::Authentication> {
+        ) -> Option<credential_entities::entity::Authentication> {
             None
         }
     }
@@ -944,14 +967,14 @@ mod tests {
             &self,
             name: &str,
             operation_name: &str,
-            manifest: &core_entities::service::WorkflowService,
+            manifest: &WorkflowService,
             _params: Value,
             _ctx: &EngineInputContext,
         ) -> error::Result<Value> {
             self.calls.lock().unwrap().push((
                 name.to_owned(),
                 operation_name.to_owned(),
-                manifest.codeString().to_owned(),
+                manifest.code_string().to_owned(),
             ));
             Ok(Value::String("workflow ran".into()))
         }
@@ -965,28 +988,36 @@ mod tests {
 
     /// Builds a [`VersionedServiceTree`] wrapping a single `SimpleCode`
     /// manifest in `language`.
-    fn simple_code_service(
-        language: core_entities::service::code_resource::Language,
-    ) -> core_entities::service::VersionedServiceTree {
-        let mut code = core_entities::service::CodeResource::new();
-        code.set_codeString("return 1".to_owned());
-        code.language = protobuf::EnumOrUnknown::new(language);
-
-        let mut simple_code = core_entities::service::SimpleCodeService::new();
-        simple_code.code = protobuf::MessageField::some(code);
-
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().set_simpleCode(simple_code);
-
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
-        tree
+    fn simple_code_service(language: code_resource::Language) -> VersionedServiceTree {
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::SimpleCode(
+                                SimpleCodeService {
+                                    code: Some(CodeResource {
+                                        language,
+                                        value: Some(code_resource::Value::CodeString(
+                                            "return 1".to_owned(),
+                                        )),
+                                    }),
+                                    ..Default::default()
+                                },
+                            )),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                },
+            )),
+        }
     }
 
     #[test]
     fn run_reports_the_correct_language_when_no_javascript_code_runner_is_registered() {
         let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(
-            simple_code_service(core_entities::service::code_resource::Language::JAVASCRIPT),
+            simple_code_service(code_resource::Language::Javascript),
         ));
         let engine = Engine::new(lookup, test_logger());
 
@@ -1004,7 +1035,7 @@ mod tests {
     #[tokio::test]
     async fn run_workflow_dispatches_to_the_registered_workflow_runner() {
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
-            Arc::new(WorkflowLookup(workflow_service("return 42")));
+            Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1037,7 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn run_workflow_errors_when_no_workflow_runner_is_registered() {
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
-            Arc::new(WorkflowLookup(workflow_service("return 42")));
+            Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -1051,10 +1082,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_workflow_errors_when_the_manifest_is_not_a_workflow() {
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().mut_swagger();
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        let tree = empty_swagger_manifest_tree();
 
         let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let mut engine = Engine::new(lookup, test_logger());
@@ -1079,7 +1107,7 @@ mod tests {
     #[test]
     fn is_workflow_operation_is_true_for_a_workflow_manifest() {
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
-            Arc::new(WorkflowLookup(workflow_service("return 42")));
+            Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -1089,10 +1117,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_false_for_a_non_workflow_manifest() {
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().mut_swagger();
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
+        let tree = empty_swagger_manifest_tree();
 
         let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let engine = Engine::new(lookup, test_logger());
@@ -1122,17 +1147,41 @@ mod tests {
         assert!(!engine.is_workflow_operation("noDotHere", &ctx));
     }
 
+    /// Builds a [`VersionedServiceTree`] wrapping a single, otherwise-empty
+    /// `Swagger` manifest - no `CommonApi`, no auth.
+    fn empty_swagger_manifest_tree() -> VersionedServiceTree {
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::Swagger(Box::default())),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                },
+            )),
+        }
+    }
+
     /// Builds a [`VersionedServiceTree`] wrapping a single `Swagger`
     /// manifest with an empty `CommonApi`.
-    fn swagger_service() -> core_entities::service::VersionedServiceTree {
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().mut_swagger();
-
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
-        tree.mut_v1().commonApi =
-            protobuf::MessageField::some(core_entities::service::CommonApi::new());
-        tree
+    fn swagger_service() -> VersionedServiceTree {
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::Swagger(Box::default())),
+                            ..Default::default()
+                        })),
+                    }),
+                    common_api: Some(CommonApi::default()),
+                    ..Default::default()
+                },
+            )),
+        }
     }
 
     struct FakeAsyncDataConnectionRunner {
@@ -1201,7 +1250,7 @@ mod tests {
     #[test]
     fn resolve_data_connector_errors_when_the_manifest_is_not_swagger() {
         let lookup: Arc<dyn EngineLookup + Send + Sync> =
-            Arc::new(WorkflowLookup(workflow_service("return 42")));
+            Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

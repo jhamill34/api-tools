@@ -3,7 +3,7 @@
 //! `Workflow`), plus the tree it's stored in alongside its resources and
 //! parsed `OpenAPI` definition.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +23,24 @@ pub struct VersionedServiceTree {
     pub version: Option<versioned_service_tree::Version>,
 }
 
+impl VersionedServiceTree {
+    /// Returns this tree's version-1 content, or an empty one if the tree
+    /// has no version set - every reader in this workspace treats "no
+    /// version" as "an empty tree" rather than an error, so this saves
+    /// every one of them from re-deriving that default.
+    #[must_use]
+    pub fn v1(&self) -> Cow<'_, versioned_service_tree::V1> {
+        match &self.version {
+            Some(versioned_service_tree::Version::V1(v1)) => Cow::Borrowed(v1),
+            None => Cow::Owned(versioned_service_tree::V1::default()),
+        }
+    }
+}
+
 /// Types nested under [`VersionedServiceTree`].
 pub mod versioned_service_tree {
+    use std::borrow::Cow;
+
     use serde::{Deserialize, Serialize};
 
     use super::{is_default, CommonApi, ServiceManifest, ServiceResource};
@@ -51,6 +67,19 @@ pub mod versioned_service_tree {
         #[serde(default, skip_serializing_if = "is_default")]
         pub common_api: Option<CommonApi>,
     }
+
+    impl V1 {
+        /// Returns this tree's version-2 manifest content, or an empty one
+        /// if it has no manifest (or an unversioned one) - see
+        /// [`super::VersionedServiceTree::v1`]'s doc comment for why.
+        #[must_use]
+        pub fn manifest_latest(&self) -> Cow<'_, super::ServiceManifestLatest> {
+            self.manifest.as_ref().map_or_else(
+                || Cow::Owned(super::ServiceManifestLatest::default()),
+                super::ServiceManifest::v2,
+            )
+        }
+    }
 }
 
 /// A single action-script resource (e.g. an `Action` operation's JS source
@@ -73,6 +102,19 @@ pub struct ServiceManifest {
     /// The manifest's version.
     #[serde(flatten, default, skip_serializing_if = "is_default")]
     pub value: Option<service_manifest::Value>,
+}
+
+impl ServiceManifest {
+    /// Returns this manifest's version-2 content, or an empty one if the
+    /// manifest has no version set - see [`VersionedServiceTree::v1`]'s doc
+    /// comment for why.
+    #[must_use]
+    pub fn v2(&self) -> Cow<'_, ServiceManifestLatest> {
+        match &self.value {
+            Some(service_manifest::Value::V2(latest)) => Cow::Borrowed(latest),
+            None => Cow::Owned(ServiceManifestLatest::default()),
+        }
+    }
 }
 
 /// Types nested under [`ServiceManifest`].
@@ -441,6 +483,28 @@ pub struct CodeResource {
     pub value: Option<code_resource::Value>,
 }
 
+impl CodeResource {
+    /// Returns the inline source, or `""` if this resource's source is a
+    /// [`code_resource::Value::ResourcePath`] (or unset) instead.
+    #[must_use]
+    pub fn code_string(&self) -> &str {
+        match &self.value {
+            Some(code_resource::Value::CodeString(s)) => s,
+            _ => "",
+        }
+    }
+
+    /// Returns the resource path, or `""` if this resource's source is
+    /// inline (or unset) instead.
+    #[must_use]
+    pub fn resource_path(&self) -> &str {
+        match &self.value {
+            Some(code_resource::Value::ResourcePath(s)) => s,
+            _ => "",
+        }
+    }
+}
+
 /// Types nested under [`CodeResource`].
 pub mod code_resource {
     use serde::{Deserialize, Serialize};
@@ -514,6 +578,28 @@ pub struct WorkflowService {
         skip_serializing_if = "is_default"
     )]
     pub memory_limit_bytes: u64,
+}
+
+impl WorkflowService {
+    /// Returns the inline Lua source, or `""` if this workflow's source is
+    /// a [`workflow_service::Source::ResourcePath`] (or unset) instead.
+    #[must_use]
+    pub fn code_string(&self) -> &str {
+        match &self.source {
+            Some(workflow_service::Source::CodeString(s)) => s,
+            _ => "",
+        }
+    }
+
+    /// Returns the resource path, or `""` if this workflow's source is
+    /// inline (or unset) instead.
+    #[must_use]
+    pub fn resource_path(&self) -> &str {
+        match &self.source {
+            Some(workflow_service::Source::ResourcePath(s)) => s,
+            _ => "",
+        }
+    }
 }
 
 /// Types nested under [`WorkflowService`].
