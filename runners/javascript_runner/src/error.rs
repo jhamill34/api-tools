@@ -28,7 +28,8 @@ pub enum JsActionRunner {
     },
 
     /// The shared engine's or logger's lock was poisoned by a panic in
-    /// another thread while holding it.
+    /// another thread while holding it. Reserved; currently unused - engine
+    /// locking now happens transparently behind `execution_engine::EngineService`.
     #[error("Get out! The lock has been poisoned: {0}")]
     PoisonedLock(String),
 

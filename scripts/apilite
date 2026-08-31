@@ -78,26 +78,7 @@ echo "Run ID: $id"
 
 status=$(apicli run-status $id)
 while [ "$status" != "Completed" ]
-do 
-	if [ "$status" == "Waiting" ]; then
-		apicli run-result $id | jq 
-
-		read -p "Provide Input? [Yn] " cont
-		if [ -z $cont ]; then
-			cont='Y'
-		fi
-
-		if [ $cont != 'Y' ]; then
-			echo 'Aborting...'
-			exit 1
-		fi
-
-		input_file=$CACHE_DIR/${selected}-input.json
-		$EDITOR $input_file
-
-		apicli provide-input $id < $input_file
-	fi
-
+do
 	sleep 1;
 	status=$(apicli run-status $id)
 done

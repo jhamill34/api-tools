@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    fs::File,
     path::PathBuf,
     sync::{
         mpsc::{Receiver, Sender},
@@ -13,7 +14,7 @@ use std::{
 
 use in_memory_storage::OperationRepos;
 use local_file_loader::LocalFileFetcher;
-use service_loader::ServiceLoader;
+use service_loader::{ServiceLoader, ServiceLoaderPort};
 use tracing::{error, info, warn};
 
 /// Spawns a thread that waits on `rx` for batches of changed service names,
@@ -27,7 +28,7 @@ pub fn start(
     rx: Receiver<Vec<String>>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        let loader = ServiceLoader::default();
+        let loader: Box<dyn ServiceLoaderPort<File>> = Box::new(ServiceLoader::default());
 
         if let Err(err) = tx.send(true) {
             error!(%err, "unable to signal to watcher thread ready");

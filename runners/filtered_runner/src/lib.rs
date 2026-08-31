@@ -4,10 +4,7 @@
 
 pub mod error;
 
-use std::{
-    rc::Rc,
-    sync::{Arc, RwLock},
-};
+use std::{rc::Rc, sync::Arc};
 
 use common_data_structures::log_writer::LogWriter;
 use lazy_static::lazy_static;
@@ -29,7 +26,7 @@ pub struct APIWrapper {
     _log: LogWriter,
 
     /// The engine used to invoke the wrapped operation.
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
 }
 
 impl APIWrapper {
@@ -37,7 +34,7 @@ impl APIWrapper {
     /// `engine`.
     #[must_use]
     #[inline]
-    pub fn new(log: LogWriter, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
+    pub fn new(log: LogWriter, engine: Arc<dyn execution_engine::EngineService>) -> Self {
         Self { _log: log, engine }
     }
 
@@ -76,11 +73,9 @@ impl APIWrapper {
             true,
         );
 
-        let engine = self
+        let result = self
             .engine
-            .read()
-            .map_err(|err| error::FilteredRunner::PoisonedLock(err.to_string()))?;
-        let result = engine.run(&id, input, serde_json::Value::Null, &context)?;
+            .run(&id, input, serde_json::Value::Null, &context)?;
 
         let result = Rc::new(result);
 

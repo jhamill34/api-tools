@@ -2,7 +2,7 @@
 //! `api`/`workflow`/`action`/`task` bindings, giving the script a way to
 //! call back into the engine and to log activity.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ pub struct TaskBinding {
     pub name: String,
 
     /// The engine used to resolve calls made from created tasks.
-    pub engine: Arc<RwLock<execution_engine::Engine>>,
+    pub engine: Arc<dyn execution_engine::EngineService>,
 
     /// The execution context created tasks run under.
     pub ctx: execution_engine::services::EngineInputContext,
@@ -39,7 +39,7 @@ impl TaskBinding {
             id,
             params: params.into(),
             name: self.name.clone(),
-            engine: Arc::<RwLock<execution_engine::Engine>>::clone(&self.engine),
+            engine: Arc::clone(&self.engine),
             ctx: execution_engine::services::EngineInputContext::new(
                 self.ctx.parent.clone(),
                 self.ctx.execution_id.clone(),
@@ -60,7 +60,7 @@ pub struct Task {
     pub name: String,
 
     /// The engine used to run this task's operation.
-    pub engine: Arc<RwLock<execution_engine::Engine>>,
+    pub engine: Arc<dyn execution_engine::EngineService>,
 
     /// The execution context this task runs under.
     pub ctx: execution_engine::services::EngineInputContext,
@@ -111,12 +111,8 @@ impl Task {
 
         let options = Value::Null;
 
-        let engine = self
+        let result = self
             .engine
-            .read()
-            .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-        let result = engine
             .run(&self.id, params, options, &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 
@@ -138,12 +134,8 @@ impl Task {
 
         let blocks = converters::from_py(blocks)?;
 
-        let engine = self
+        let result = self
             .engine
-            .read()
-            .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-        let result = engine
             .run("$input", blocks, Value::Null, &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Collecting Input: {e}")))?;
 
@@ -158,7 +150,8 @@ impl Task {
 
         let options = Value::Null;
 
-        let result = engine
+        let result = self
+            .engine
             .run(&self.id, params, options, &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 
@@ -174,7 +167,7 @@ pub struct APIBindingWraper {
     pub name: String,
 
     /// The engine used to resolve `run` calls.
-    pub engine: Arc<RwLock<execution_engine::Engine>>,
+    pub engine: Arc<dyn execution_engine::EngineService>,
 
     /// The execution context `run` calls run under.
     pub ctx: execution_engine::services::EngineInputContext,
@@ -207,12 +200,8 @@ impl APIBindingWraper {
             .transpose()?
             .unwrap_or(Value::Null);
 
-        let engine = self
+        let result = self
             .engine
-            .read()
-            .map_err(|e| PyValueError::new_err(format!("Locking Error: {e}")))?;
-
-        let result = engine
             .run(id, params, options, &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 

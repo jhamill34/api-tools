@@ -7,7 +7,7 @@ mod constants;
 mod converters;
 pub mod error;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use common_data_structures::log_writer::LogWriter;
 use execution_engine::services::CodeRunner;
@@ -37,7 +37,7 @@ where
 /// into the shared [`execution_engine::Engine`].
 pub struct PyActionRunner {
     /// The engine used to resolve calls made from the script's bindings.
-    engine: Arc<RwLock<execution_engine::Engine>>,
+    engine: Arc<dyn execution_engine::EngineService>,
 
     /// Where the script's bindings log activity.
     loggers: LogWriter,
@@ -48,7 +48,7 @@ impl PyActionRunner {
     /// `engine` and logs them to `loggers`.
     #[inline]
     #[must_use]
-    pub fn new(loggers: LogWriter, engine: Arc<RwLock<execution_engine::Engine>>) -> Self {
+    pub fn new(loggers: LogWriter, engine: Arc<dyn execution_engine::EngineService>) -> Self {
         Self { engine, loggers }
     }
 
