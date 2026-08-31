@@ -1178,8 +1178,6 @@ dependencies = [
  "core_entities",
  "credential_entities",
  "execution_engine",
- "protobuf",
- "protobuf-json-mapping",
  "regex",
  "serde_json",
  "service_loader",

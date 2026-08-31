@@ -17,22 +17,6 @@ pub enum OperationRepo {
     #[error("Operation not found: {0}")]
     OperationNotFound(String),
 
-    /// Serializing a value to its protobuf JSON representation failed.
-    #[error(transparent)]
-    ProtobufSerialize {
-        /// The underlying protobuf serialization error.
-        #[from]
-        source: protobuf_json_mapping::PrintError,
-    },
-
-    /// Parsing a value from its protobuf JSON representation failed.
-    #[error(transparent)]
-    ProtobufParse {
-        /// The underlying protobuf parse error.
-        #[from]
-        source: protobuf_json_mapping::ParseError,
-    },
-
     /// Serializing or deserializing a value as plain JSON failed.
     #[error(transparent)]
     Json {

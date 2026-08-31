@@ -6,8 +6,8 @@
 pub mod error;
 pub mod repo;
 
-use core_entities::service::VersionedServiceTree;
-use credential_entities::credentials::Authentication;
+use core_entities::entity::VersionedServiceTree;
+use credential_entities::entity::Authentication;
 use execution_engine::services::EngineLookup;
 use repo::Repository;
 use service_loader::LoaderOutput;

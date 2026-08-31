@@ -8,8 +8,6 @@ edition = "2021"
 [dependencies]
 common_data_structures = { path = "../../common/data_structures" }
 serde_json = { workspace = true }
-protobuf = { workspace = true }
-protobuf-json-mapping = { workspace = true }
 
 service_loader = { path = "../../usecases/service_loader" }
 execution_engine = { path = "../../usecases/execution_engine" }
