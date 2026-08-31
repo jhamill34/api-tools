@@ -153,30 +153,25 @@ dependencies = [
  "async-trait",
  "common_data_structures",
  "core_entities",
- "core_json_compat",
  "credential_entities",
  "dhat",
  "dotenv",
- "engine_entities",
  "execution_engine",
  "filtered_runner",
+ "grpc_api",
  "in_memory_storage",
  "javascript_runner",
  "local_file_loader",
  "notify",
- "prost",
  "python_runner",
  "serde",
- "serde_json",
  "service_loader",
  "service_writer",
  "tempfile",
  "tokio",
  "toml 0.7.8",
- "tonic",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "workflow_runner",
 ]
 
@@ -975,6 +970,22 @@ dependencies = [
  "bitflags 1.3.2",
  "ignore",
  "walkdir",
+]
+
+[[package]]
+name = "grpc_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core_entities",
+ "core_json_compat",
+ "credential_entities",
+ "engine_entities",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

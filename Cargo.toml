@@ -34,6 +34,10 @@ members = [
 
 	"auth/oauth_flow",
 
+	# gRPC transport adapter - implements engine_entities' generated
+	# tonic service against core_entities::ports alone
+	"api/grpc_api",
+
 	# Spikes / prototypes - not wired into any binary yet, see the linked
 	# issue in each crate's README for context and status.
 	"prototypes/workflow_engine",

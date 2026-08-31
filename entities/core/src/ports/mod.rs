@@ -8,6 +8,7 @@
 //! type doesn't reduce anyone's dependency footprint by moving, so those
 //! stay put.
 
+pub mod catalog;
 pub mod engine;
 pub mod loader;
 pub mod value;
