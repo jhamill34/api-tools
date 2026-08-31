@@ -51,7 +51,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use core_entities::service::WorkflowService as WorkflowManifest;
+use core_entities::entity::WorkflowService as WorkflowManifest;
 use execution_engine::{
     error::ExecutionEngine,
     services::{DataConnectorBundle, EngineInputContext, WorkflowRunner},
@@ -151,12 +151,12 @@ async fn run_one_workflow(
 ) -> execution_engine::error::Result<Value> {
     let manifest = &request.manifest;
 
-    let timeout = if manifest.timeoutSeconds == 0 {
+    let timeout = if manifest.timeout_seconds == 0 {
         DEFAULT_TIMEOUT
     } else {
-        Duration::from_secs(u64::from(manifest.timeoutSeconds))
+        Duration::from_secs(u64::from(manifest.timeout_seconds))
     };
-    let memory_limit = usize::try_from(manifest.memoryLimitBytes).ok();
+    let memory_limit = usize::try_from(manifest.memory_limit_bytes).ok();
 
     let workflow_engine = workflow_engine::WorkflowEngine::with_limits(timeout, memory_limit)
         .map_err(|err| ExecutionEngine::Other {
@@ -185,7 +185,7 @@ async fn run_one_workflow(
     })?;
 
     workflow_engine
-        .run(manifest.codeString(), request.params.clone())
+        .run(manifest.code_string(), request.params.clone())
         .await
         .map_err(|err| ExecutionEngine::Other {
             source: anyhow::Error::from(err),
@@ -306,7 +306,10 @@ impl WorkflowRunner for WorkflowAdapter {
         params: Value,
         ctx: &EngineInputContext,
     ) -> execution_engine::error::Result<Value> {
-        if manifest.has_resourcePath() {
+        if matches!(
+            &manifest.source,
+            Some(core_entities::entity::workflow_service::Source::ResourcePath(_))
+        ) {
             return Err(ExecutionEngine::Unimplemented(
                 "Workflow source loaded from a resourcePath (only codeString is supported)".into(),
             ));
@@ -339,17 +342,27 @@ mod tests {
 
     use super::*;
 
+    /// Builds a [`WorkflowManifest`] with `code` as its inline Lua source.
+    fn workflow_manifest(code: &str) -> WorkflowManifest {
+        WorkflowManifest {
+            source: Some(core_entities::entity::workflow_service::Source::CodeString(
+                code.to_owned(),
+            )),
+            ..Default::default()
+        }
+    }
+
     struct EmptyLookup;
 
     impl EngineLookup for EmptyLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
             None
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::credentials::Authentication> {
+        ) -> Option<credential_entities::entity::Authentication> {
             None
         }
     }
@@ -363,8 +376,12 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_adapter_runs_lua_source_from_the_manifest() {
-        let mut manifest = core_entities::service::WorkflowService::new();
-        manifest.set_codeString("return input.x + 1".to_owned());
+        let manifest = WorkflowManifest {
+            source: Some(core_entities::entity::workflow_service::Source::CodeString(
+                "return input.x + 1".to_owned(),
+            )),
+            ..Default::default()
+        };
 
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
@@ -387,8 +404,12 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_adapter_rejects_a_resource_path_manifest() {
-        let mut manifest = core_entities::service::WorkflowService::new();
-        manifest.set_resourcePath("workflow.lua".to_owned());
+        let manifest = WorkflowManifest {
+            source: Some(core_entities::entity::workflow_service::Source::ResourcePath(
+                "workflow.lua".to_owned(),
+            )),
+            ..Default::default()
+        };
 
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
@@ -426,17 +447,17 @@ mod tests {
         }
     }
 
-    struct SingleServiceLookup(core_entities::service::VersionedServiceTree);
+    struct SingleServiceLookup(core_entities::entity::VersionedServiceTree);
 
     impl EngineLookup for SingleServiceLookup {
-        fn get_service(&self, id: &str) -> Option<core_entities::service::VersionedServiceTree> {
+        fn get_service(&self, id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
             (id == "other").then(|| self.0.clone())
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::credentials::Authentication> {
+        ) -> Option<credential_entities::entity::Authentication> {
             None
         }
     }
@@ -446,37 +467,64 @@ mod tests {
     /// registers a `FakeCodeRunner` rather than a real runtime) manifest -
     /// what `api.run` inside a workflow script needs to find via
     /// `Engine::run` for a nested call to actually dispatch anywhere.
-    fn simple_code_service() -> core_entities::service::VersionedServiceTree {
-        let mut code = core_entities::service::CodeResource::new();
-        code.set_codeString("ignored - FakeCodeRunner doesn't execute it".to_owned());
-        code.language = protobuf::EnumOrUnknown::new(
-            core_entities::service::code_resource::Language::JAVASCRIPT,
-        );
+    fn simple_code_service() -> core_entities::entity::VersionedServiceTree {
+        use core_entities::entity::{
+            code_resource, service_manifest, service_manifest_latest, versioned_service_tree,
+            CodeResource, ServiceManifest, ServiceManifestLatest, SimpleCodeService,
+            VersionedServiceTree,
+        };
 
-        let mut simple_code = core_entities::service::SimpleCodeService::new();
-        simple_code.code = protobuf::MessageField::some(code);
+        let code = CodeResource {
+            language: code_resource::Language::Javascript,
+            value: Some(code_resource::Value::CodeString(
+                "ignored - FakeCodeRunner doesn't execute it".to_owned(),
+            )),
+        };
 
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().set_simpleCode(simple_code);
+        let simple_code = SimpleCodeService {
+            code: Some(code),
+            ..Default::default()
+        };
 
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
-        tree
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::SimpleCode(simple_code)),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                },
+            )),
+        }
     }
 
     /// A `VersionedServiceTree` wrapping a single `Swagger` manifest with
     /// an empty `CommonApi` - what `api.call` inside a workflow script
     /// needs to find via `Engine::resolve_data_connector` for a nested
     /// call to actually resolve.
-    fn swagger_service() -> core_entities::service::VersionedServiceTree {
-        let mut manifest = core_entities::service::ServiceManifest::new();
-        manifest.mut_v2().mut_swagger();
+    fn swagger_service() -> core_entities::entity::VersionedServiceTree {
+        use core_entities::entity::{
+            service_manifest, service_manifest_latest, versioned_service_tree, CommonApi,
+            ServiceManifest, ServiceManifestLatest, VersionedServiceTree,
+        };
 
-        let mut tree = core_entities::service::VersionedServiceTree::new();
-        tree.mut_v1().manifest = protobuf::MessageField::some(manifest);
-        tree.mut_v1().commonApi =
-            protobuf::MessageField::some(core_entities::service::CommonApi::new());
-        tree
+        VersionedServiceTree {
+            version: Some(versioned_service_tree::Version::V1(
+                versioned_service_tree::V1 {
+                    manifest: Some(ServiceManifest {
+                        value: Some(service_manifest::Value::V2(ServiceManifestLatest {
+                            value: Some(service_manifest_latest::Value::Swagger(Box::default())),
+                            ..Default::default()
+                        })),
+                    }),
+                    common_api: Some(CommonApi::default()),
+                    ..Default::default()
+                },
+            )),
+        }
     }
 
     struct FakeAsyncDataConnectionRunner {
@@ -516,8 +564,7 @@ mod tests {
         }));
         let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
-        let mut manifest = core_entities::service::WorkflowService::new();
-        manifest.set_codeString("return api.call('other.op', { hello = 'world' })".to_owned());
+        let manifest = workflow_manifest("return api.call('other.op', { hello = 'world' })");
 
         let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -549,11 +596,9 @@ mod tests {
         }));
         let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
-        let mut manifest = core_entities::service::WorkflowService::new();
-        manifest.set_codeString(
+        let manifest = workflow_manifest(
             "local ok = pcall(function() return api.call('other.op', {}) end)\n\
-                              return { ok = ok }"
-                .to_owned(),
+                              return { ok = ok }",
         );
 
         let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
@@ -588,8 +633,7 @@ mod tests {
         );
         let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
 
-        let mut manifest = core_entities::service::WorkflowService::new();
-        manifest.set_codeString("return api.run('other.op', { hello = 'world' })".to_owned());
+        let manifest = workflow_manifest("return api.run('other.op', { hello = 'world' })");
 
         let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
