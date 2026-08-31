@@ -1,0 +1,8 @@
+version: 2
+
+secret:
+  ignored_matches:
+    - name: json_compat_tests dummy BasicCredentials (username) - test fixture, not a real secret
+      match: alice
+    - name: json_compat_tests dummy BasicCredentials (password) - test fixture, not a real secret
+      match: hunter2
