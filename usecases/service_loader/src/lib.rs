@@ -9,11 +9,11 @@ pub mod error;
 
 use std::io;
 
+pub use core_entities::ports::loader::{Fetcher, LoaderOutput};
 use core_entities::service::{
     service_manifest, service_manifest_latest, versioned_service_tree, ServiceManifestLatest,
     SwaggerOverrides, VersionedServiceTree,
 };
-pub use core_entities::ports::loader::{Fetcher, LoaderOutput};
 use loaders::{load_configuration, load_credentials, load_service};
 
 /// Copies `$field` from `$source` onto `$sink` only if it's non-empty on
@@ -38,7 +38,10 @@ pub fn merge(
     service: &mut VersionedServiceTree,
     overrides: &SwaggerOverrides,
 ) -> error::Result<()> {
-    if !matches!(&service.version, Some(versioned_service_tree::Version::V1(_))) {
+    if !matches!(
+        &service.version,
+        Some(versioned_service_tree::Version::V1(_))
+    ) {
         service.version = Some(versioned_service_tree::Version::V1(
             versioned_service_tree::V1::default(),
         ));
@@ -89,7 +92,11 @@ pub fn merge(
         unreachable!("just set to Some(Value::Swagger(_)) above")
     };
 
-    if let Some(oauth_config) = manifest.auth.as_mut().and_then(|auth| auth.oauth_config.as_mut()) {
+    if let Some(oauth_config) = manifest
+        .auth
+        .as_mut()
+        .and_then(|auth| auth.oauth_config.as_mut())
+    {
         if let Some(oauth_config_override) = &overrides.oauth_config {
             apply_if_exists!(name, oauth_config_override => oauth_config);
             apply_if_exists!(auth_uri, oauth_config_override => oauth_config);

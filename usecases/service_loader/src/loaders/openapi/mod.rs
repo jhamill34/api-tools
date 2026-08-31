@@ -738,7 +738,10 @@ mod test {
         assert_eq!(Some(100), page.max_limit);
         let Some(service::pagination::ExtendedPath::JmesPath(results_path)) = &page.results_path
         else {
-            panic!("expected a JmesPath resultsPath, got {:?}", page.results_path);
+            panic!(
+                "expected a JmesPath resultsPath, got {:?}",
+                page.results_path
+            );
         };
         assert_eq!("$response.body#/", results_path);
 
@@ -812,14 +815,12 @@ mod test {
         assert_eq!(service::schema_object::SchemaType::Object, schema.r#type);
 
         let props = &schema.properties;
-        let Some(service::SchemaValue::SchemaObject(foo)) = &props.get("foo").unwrap().value
-        else {
+        let Some(service::SchemaValue::SchemaObject(foo)) = &props.get("foo").unwrap().value else {
             panic!("expected a SchemaObject");
         };
         assert_eq!(service::schema_object::SchemaType::Number, foo.r#type);
 
-        let Some(service::SchemaValue::SchemaObject(bar)) = &props.get("bar").unwrap().value
-        else {
+        let Some(service::SchemaValue::SchemaObject(bar)) = &props.get("bar").unwrap().value else {
             panic!("expected a SchemaObject");
         };
         assert_eq!(service::schema_object::SchemaType::Object, bar.r#type);

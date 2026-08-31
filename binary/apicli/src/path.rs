@@ -304,7 +304,15 @@ pub fn populate_schema_list(
             }
 
             seen.insert(reference.clone(), path.join(""));
-            populate_schema_list(list, types.get(reference), types, seen, path, is_required, prefix);
+            populate_schema_list(
+                list,
+                types.get(reference),
+                types,
+                seen,
+                path,
+                is_required,
+                prefix,
+            );
             seen.remove(reference);
         }
         SchemaValue::SchemaObject(schema) => {

@@ -147,11 +147,7 @@ impl JsActionRunner {
                 serde_json::Value::Null
             };
 
-            let context = EngineInputContext::new(
-                Some(name.clone()),
-                execution_id.clone(),
-                false,
-            );
+            let context = EngineInputContext::new(Some(name.clone()), execution_id.clone(), false);
             let result = engine
                 .run(&id, params, options, &context)
                 .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;

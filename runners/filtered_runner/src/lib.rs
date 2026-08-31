@@ -67,11 +67,8 @@ impl APIWrapper {
             }
         }
 
-        let context = EngineInputContext::new(
-            Some(name.to_owned()),
-            ctx.execution_id.clone(),
-            true,
-        );
+        let context =
+            EngineInputContext::new(Some(name.to_owned()), ctx.execution_id.clone(), true);
 
         let result = self
             .engine

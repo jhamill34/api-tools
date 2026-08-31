@@ -23,9 +23,8 @@ pub async fn route(
         ));
     };
 
-    let bad_request = || {
-        error::CallbackResponse::BadRequest("Connector doesn't use Oauth".to_string())
-    };
+    let bad_request =
+        || error::CallbackResponse::BadRequest("Connector doesn't use Oauth".to_string());
     let oauth_config = service
         .auth
         .as_ref()

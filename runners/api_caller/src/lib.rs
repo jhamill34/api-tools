@@ -9,11 +9,10 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use common_data_structures::log_writer::LogWriter;
-use core_entities::service::{Operation, Pagination, Parameter, SwaggerService};
 use core_entities::ports::engine::{
-    self, AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle,
-    EngineInputContext,
+    self, AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext,
 };
+use core_entities::service::{Operation, Pagination, Parameter, SwaggerService};
 use credential_entities::credentials::Authentication;
 use http::{HeaderMap, HeaderName, HeaderValue};
 
@@ -86,16 +85,22 @@ fn find_results<'item>(
     pagination_config: Option<&Pagination>,
 ) -> error::Result<&'item serde_json::Value> {
     let results_path = match pagination_config {
-        Some(Pagination::PageOffset(page_offset)) => {
-            page_offset.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
-        }
-        Some(Pagination::MultiCursor(cursor)) => {
-            cursor.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
-        }
-        Some(Pagination::Offset(offset)) => offset.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path),
-        Some(Pagination::Unpaginated(unpaginated)) => {
-            unpaginated.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
-        }
+        Some(Pagination::PageOffset(page_offset)) => page_offset
+            .results_path
+            .as_ref()
+            .map(core_entities::service::pagination::ExtendedPath::jmes_path),
+        Some(Pagination::MultiCursor(cursor)) => cursor
+            .results_path
+            .as_ref()
+            .map(core_entities::service::pagination::ExtendedPath::jmes_path),
+        Some(Pagination::Offset(offset)) => offset
+            .results_path
+            .as_ref()
+            .map(core_entities::service::pagination::ExtendedPath::jmes_path),
+        Some(Pagination::Unpaginated(unpaginated)) => unpaginated
+            .results_path
+            .as_ref()
+            .map(core_entities::service::pagination::ExtendedPath::jmes_path),
         Some(Pagination::NextUrl(_)) | None => None,
     };
 
@@ -459,7 +464,9 @@ impl APICallState {
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
                     .as_header()
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("header credentials".into()))?
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("header credentials".into())
+                    })?
                     .value;
                 self.header_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
@@ -469,7 +476,9 @@ impl APICallState {
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
                     .as_query()
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("query credentials".into()))?
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("query credentials".into())
+                    })?
                     .value;
                 self.query_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
@@ -479,7 +488,9 @@ impl APICallState {
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
                     .as_path()
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("path credentials".into()))?
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("path credentials".into())
+                    })?
                     .value;
                 self.path_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
@@ -488,7 +499,9 @@ impl APICallState {
                 let value = creds
                     .ok_or(error::APICaller::MissingCredentials)?
                     .as_basic()
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("basic credentials".into()))?;
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("basic credentials".into())
+                    })?;
                 let encoded_creds = base64::engine::general_purpose::STANDARD
                     .encode(format!("{}:{}", value.username, value.password));
 
@@ -504,7 +517,9 @@ impl APICallState {
                 let value = creds
                     .ok_or(error::APICaller::MissingCredentials)?
                     .as_oauth()
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("oauth credentials".into()))?;
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("oauth credentials".into())
+                    })?;
                 let access_token = value
                     .access_token
                     .as_ref()
@@ -759,7 +774,10 @@ impl APICaller {
             call_state.collect_params(params, &operation.parameter, true)?;
             call_state.handle_auth(bundle.manifest, bundle.creds)?;
             call_state.set_method(operation)?;
-            call_state.set_endpoint(bundle.api.base_path.as_deref().unwrap_or(""), &operation.path);
+            call_state.set_endpoint(
+                bundle.api.base_path.as_deref().unwrap_or(""),
+                &operation.path,
+            );
 
             let request_size = call_state.handle_pagination(
                 operation.pagination.as_ref(),
@@ -916,7 +934,10 @@ impl AsyncAPICaller {
             call_state.collect_params(params, &operation.parameter, true)?;
             call_state.handle_auth(bundle.manifest, bundle.creds)?;
             call_state.set_method(operation)?;
-            call_state.set_endpoint(bundle.api.base_path.as_deref().unwrap_or(""), &operation.path);
+            call_state.set_endpoint(
+                bundle.api.base_path.as_deref().unwrap_or(""),
+                &operation.path,
+            );
 
             let request_size = call_state.handle_pagination(
                 operation.pagination.as_ref(),

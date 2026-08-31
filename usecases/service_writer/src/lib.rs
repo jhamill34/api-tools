@@ -4,8 +4,8 @@
 
 use std::{collections::HashMap, io};
 
-use core_entities::service::{self, VersionedServiceTree};
 pub use core_entities::ports::writer::Storage;
+use core_entities::service::{self, VersionedServiceTree};
 use credential_entities::credentials::Authentication;
 
 pub mod error;
@@ -148,7 +148,10 @@ fn handle_openapi<W: io::Write>(
     let mut root = serde_json::Map::new();
 
     let mut server = serde_json::Map::new();
-    server.insert("url".into(), message.base_path.clone().unwrap_or_default().into());
+    server.insert(
+        "url".into(),
+        message.base_path.clone().unwrap_or_default().into(),
+    );
     root.insert("servers".into(), vec![server].into());
 
     if !message.description.is_empty() || !message.title.is_empty() {
@@ -561,7 +564,8 @@ mod tests {
 
     #[test]
     fn handle_schema_writes_composed_schema_branches_under_the_matching_key() {
-        let ref_branch = |name: &str| service::Schema::new(service::SchemaValue::Ref(name.to_owned()));
+        let ref_branch =
+            |name: &str| service::Schema::new(service::SchemaValue::Ref(name.to_owned()));
 
         for (value, key) in [
             (

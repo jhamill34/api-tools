@@ -19,8 +19,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use core_entities::service::{service_manifest_latest, VersionedServiceTree};
 use core_entities::ports::engine::{self, EngineInputContext, EngineLookup, EngineService};
+use core_entities::service::{service_manifest_latest, VersionedServiceTree};
 use credential_entities::credentials::Authentication;
 use dotenv::dotenv;
 use engine_entities::engine::{
@@ -246,11 +246,7 @@ impl Engine for ApiDaemon {
         // anything, so there's nothing to drop before the `.await` below -
         // see `Engine::is_workflow_operation`'s docs.
         let is_workflow = {
-            let ctx = EngineInputContext::new(
-                None,
-                execution_id.to_string(),
-                false,
-            );
+            let ctx = EngineInputContext::new(None, execution_id.to_string(), false);
             engine.is_workflow_operation(&operation_id, &ctx)
         };
 
@@ -263,11 +259,7 @@ impl Engine for ApiDaemon {
             // anything - see its docs for why holding the lock across the
             // await isn't an option here.
             tokio::spawn(async move {
-                let ctx = EngineInputContext::new(
-                    None,
-                    execution_id.to_string(),
-                    false,
-                );
+                let ctx = EngineInputContext::new(None, execution_id.to_string(), false);
 
                 let resolution = engine.resolve_workflow(&operation_id, &ctx);
 
@@ -283,11 +275,7 @@ impl Engine for ApiDaemon {
             });
         } else {
             tokio::task::spawn_blocking(move || {
-                let ctx = EngineInputContext::new(
-                    None,
-                    execution_id.to_string(),
-                    false,
-                );
+                let ctx = EngineInputContext::new(None, execution_id.to_string(), false);
 
                 finish_run(&execution_id.to_string(), &responses, move || {
                     engine.run(&operation_id, input, options, &ctx)
@@ -372,9 +360,7 @@ async fn finish_run_async<F>(
     responses: &Mutex<HashMap<String, GetRunResultResponse>>,
     task: F,
 ) where
-    F: std::future::Future<Output = engine::error::Result<serde_json::Value>>
-        + Send
-        + 'static,
+    F: std::future::Future<Output = engine::error::Result<serde_json::Value>> + Send + 'static,
 {
     let outcome = tokio::spawn(task).await;
 
@@ -689,9 +675,7 @@ mod tests {
         let (responses, execution_id) = empty_state();
 
         finish_run(&execution_id, &responses, || {
-            Err(engine::error::ExecutionEngine::NotFound(
-                "widget".into(),
-            ))
+            Err(engine::error::ExecutionEngine::NotFound("widget".into()))
         });
 
         let responses = responses.lock().unwrap();
@@ -744,9 +728,7 @@ mod tests {
         let (responses, execution_id) = empty_state();
 
         finish_run_async(&execution_id, &responses, async {
-            Err(engine::error::ExecutionEngine::NotFound(
-                "widget".into(),
-            ))
+            Err(engine::error::ExecutionEngine::NotFound("widget".into()))
         })
         .await;
 

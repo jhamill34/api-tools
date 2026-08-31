@@ -38,7 +38,11 @@ impl Authentication {
     pub fn as_basic(&self) -> Option<&BasicCredentials> {
         match self {
             Self::Basic(v) => Some(v),
-            Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+            Self::Header(_)
+            | Self::Query(_)
+            | Self::Path(_)
+            | Self::Oauth(_)
+            | Self::MultiHeader(_) => None,
         }
     }
 
@@ -47,7 +51,11 @@ impl Authentication {
     pub fn as_header(&self) -> Option<&HeaderCredentials> {
         match self {
             Self::Header(v) => Some(v),
-            Self::Basic(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+            Self::Basic(_)
+            | Self::Query(_)
+            | Self::Path(_)
+            | Self::Oauth(_)
+            | Self::MultiHeader(_) => None,
         }
     }
 
@@ -56,7 +64,11 @@ impl Authentication {
     pub fn as_query(&self) -> Option<&QueryCredentials> {
         match self {
             Self::Query(v) => Some(v),
-            Self::Basic(_) | Self::Header(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+            Self::Basic(_)
+            | Self::Header(_)
+            | Self::Path(_)
+            | Self::Oauth(_)
+            | Self::MultiHeader(_) => None,
         }
     }
 
@@ -65,7 +77,11 @@ impl Authentication {
     pub fn as_path(&self) -> Option<&PathCredentials> {
         match self {
             Self::Path(v) => Some(v),
-            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+            Self::Basic(_)
+            | Self::Header(_)
+            | Self::Query(_)
+            | Self::Oauth(_)
+            | Self::MultiHeader(_) => None,
         }
     }
 
@@ -74,7 +90,11 @@ impl Authentication {
     pub fn as_oauth(&self) -> Option<&OAuthCredentials> {
         match self {
             Self::Oauth(v) => Some(v),
-            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::MultiHeader(_) => None,
+            Self::Basic(_)
+            | Self::Header(_)
+            | Self::Query(_)
+            | Self::Path(_)
+            | Self::MultiHeader(_) => None,
         }
     }
 
@@ -83,7 +103,9 @@ impl Authentication {
     pub fn as_multi_header(&self) -> Option<&MultiHeaderCredentials> {
         match self {
             Self::MultiHeader(v) => Some(v),
-            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) => None,
+            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) => {
+                None
+            }
         }
     }
 }

@@ -63,7 +63,13 @@ pub fn get_input(
                     let mut path = vec!["$body".to_owned()];
                     input_example.insert(
                         "$body".to_owned(),
-                        schema_to_value(content.schema.as_ref(), types, &mut seen, &mut path, required),
+                        schema_to_value(
+                            content.schema.as_ref(),
+                            types,
+                            &mut seen,
+                            &mut path,
+                            required,
+                        ),
                     );
                 }
             }
@@ -158,7 +164,8 @@ pub fn get_output(
             let mut seen = HashMap::new();
             let mut path = vec![];
 
-            let output = schema_to_value(content.schema.as_ref(), types, &mut seen, &mut path, false);
+            let output =
+                schema_to_value(content.schema.as_ref(), types, &mut seen, &mut path, false);
             Ok(output)
         }
         Some(service_manifest_latest::Value::Action(manifest)) => {

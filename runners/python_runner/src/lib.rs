@@ -111,11 +111,7 @@ impl PyActionRunner {
             let task = bindings::TaskBinding {
                 name: format!("{name}.{operation_name}"),
                 engine: Arc::clone(&self.engine),
-                ctx: EngineInputContext::new(
-                    Some(name.to_owned()),
-                    ctx.execution_id.clone(),
-                    true,
-                ),
+                ctx: EngineInputContext::new(Some(name.to_owned()), ctx.execution_id.clone(), true),
                 logger: self.loggers.clone(),
             };
 

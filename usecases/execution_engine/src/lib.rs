@@ -7,11 +7,11 @@
 mod constants;
 
 use common_data_structures::log_writer::LogWriter;
-use serde_json::Value;
 use core_entities::ports::engine::{
     error, AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
     EngineInputContext, EngineLookup, EngineService, FilteredRunner, ScriptRunner, WorkflowRunner,
 };
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::offset::Local;
@@ -297,7 +297,11 @@ impl Engine {
                 )));
             };
 
-            let path = format!("{}/{}", action.source, operation.js.as_deref().unwrap_or(""));
+            let path = format!(
+                "{}/{}",
+                action.source,
+                operation.js.as_deref().unwrap_or("")
+            );
 
             let source = service
                 .resources

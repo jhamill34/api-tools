@@ -51,11 +51,11 @@
 
 use std::{sync::Arc, time::Duration};
 
-use core_entities::service::WorkflowService as WorkflowManifest;
 use core_entities::ports::engine::{
     self, error::ExecutionEngine, DataConnectorBundle, EngineInputContext, EngineService,
     WorkflowRunner,
 };
+use core_entities::service::WorkflowService as WorkflowManifest;
 use mlua::LuaSerdeExt;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -345,9 +345,9 @@ mod tests {
     /// Builds a [`WorkflowManifest`] with `code` as its inline Lua source.
     fn workflow_manifest(code: &str) -> WorkflowManifest {
         WorkflowManifest {
-            source: Some(core_entities::service::workflow_service::Source::CodeString(
-                code.to_owned(),
-            )),
+            source: Some(
+                core_entities::service::workflow_service::Source::CodeString(code.to_owned()),
+            ),
             ..Default::default()
         }
     }
@@ -377,9 +377,11 @@ mod tests {
     #[tokio::test]
     async fn workflow_adapter_runs_lua_source_from_the_manifest() {
         let manifest = WorkflowManifest {
-            source: Some(core_entities::service::workflow_service::Source::CodeString(
-                "return input.x + 1".to_owned(),
-            )),
+            source: Some(
+                core_entities::service::workflow_service::Source::CodeString(
+                    "return input.x + 1".to_owned(),
+                ),
+            ),
             ..Default::default()
         };
 
@@ -405,9 +407,11 @@ mod tests {
     #[tokio::test]
     async fn workflow_adapter_rejects_a_resource_path_manifest() {
         let manifest = WorkflowManifest {
-            source: Some(core_entities::service::workflow_service::Source::ResourcePath(
-                "workflow.lua".to_owned(),
-            )),
+            source: Some(
+                core_entities::service::workflow_service::Source::ResourcePath(
+                    "workflow.lua".to_owned(),
+                ),
+            ),
             ..Default::default()
         };
 
