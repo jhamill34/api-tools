@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use common_data_structures::log_writer::LogWriter;
+use core_entities::ports::engine::{EngineInputContext, EngineService};
 
 use super::{constants, converters};
 use pyo3::exceptions::{PyArithmeticError, PyTypeError, PyValueError};
@@ -21,10 +22,10 @@ pub struct TaskBinding {
     pub name: String,
 
     /// The engine used to resolve calls made from created tasks.
-    pub engine: Arc<dyn execution_engine::EngineService>,
+    pub engine: Arc<dyn EngineService>,
 
     /// The execution context created tasks run under.
-    pub ctx: execution_engine::services::EngineInputContext,
+    pub ctx: EngineInputContext,
 
     /// Where created tasks log activity.
     pub logger: LogWriter,
@@ -40,7 +41,7 @@ impl TaskBinding {
             params: params.into(),
             name: self.name.clone(),
             engine: Arc::clone(&self.engine),
-            ctx: execution_engine::services::EngineInputContext::new(
+            ctx: EngineInputContext::new(
                 self.ctx.parent.clone(),
                 self.ctx.execution_id.clone(),
                 false,
@@ -60,10 +61,10 @@ pub struct Task {
     pub name: String,
 
     /// The engine used to run this task's operation.
-    pub engine: Arc<dyn execution_engine::EngineService>,
+    pub engine: Arc<dyn EngineService>,
 
     /// The execution context this task runs under.
-    pub ctx: execution_engine::services::EngineInputContext,
+    pub ctx: EngineInputContext,
 
     /// Where this task logs activity.
     pub logger: LogWriter,
@@ -167,10 +168,10 @@ pub struct APIBindingWraper {
     pub name: String,
 
     /// The engine used to resolve `run` calls.
-    pub engine: Arc<dyn execution_engine::EngineService>,
+    pub engine: Arc<dyn EngineService>,
 
     /// The execution context `run` calls run under.
-    pub ctx: execution_engine::services::EngineInputContext,
+    pub ctx: EngineInputContext,
 
     /// Where each call is logged.
     pub logger: LogWriter,

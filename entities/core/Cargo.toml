@@ -8,9 +8,14 @@ edition = "2021"
 [dependencies]
 protobuf = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+credential_entities = { path = "../credentials" }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 protobuf-json-mapping = { workspace = true }
 
 [build-dependencies]

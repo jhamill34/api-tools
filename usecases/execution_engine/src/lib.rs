@@ -1,18 +1,16 @@
 //! The core orchestrator: [`Engine`] resolves a `service.operation`
 //! identifier against a loaded manifest and dispatches it to the
-//! registered [`services`] output port for that manifest's type.
-
-pub mod error;
-pub mod services;
+//! registered [`services`](core_entities::ports::engine) output port for
+//! that manifest's type.
 
 /// Shared constants for the engine.
 mod constants;
 
 use common_data_structures::log_writer::LogWriter;
 use serde_json::Value;
-use services::{
-    AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
-    EngineInputContext, EngineLookup, FilteredRunner, ScriptRunner, WorkflowRunner,
+use core_entities::ports::engine::{
+    error, AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
+    EngineInputContext, EngineLookup, EngineService, FilteredRunner, ScriptRunner, WorkflowRunner,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -22,7 +20,7 @@ use core_entities::entity::{code_resource::Language, service_manifest_latest};
 /// Wraps a non-array `result` in a single-element array unless
 /// `raw_response` is set - the shared tail behavior of [`Engine::run`] and
 /// [`Engine::run_workflow`], also used directly by callers (e.g. `apid`)
-/// that resolve and await a [`services::WorkflowRunner`] themselves via
+/// that resolve and await a [`core_entities::ports::engine::WorkflowRunner`] themselves via
 /// [`Engine::resolve_workflow`] instead of going through `run_workflow`.
 #[must_use]
 pub fn wrap_result(result: Value, raw_response: bool) -> Value {
@@ -79,69 +77,11 @@ pub struct Engine {
     async_connector: Option<Arc<dyn AsyncDataConnectionRunner>>,
 }
 
-/// A primary/driving port: the behavioral surface a driving adapter (e.g.
-/// `apid`'s gRPC handlers, or a `runners/*` adapter's own bindings calling
-/// back in for a nested operation) calls once an [`Engine`] has been fully
-/// built and every adapter registered. Unlike [`services`]' traits - which
-/// [`Engine`] itself calls *out* through to a registered adapter - this one
-/// is implemented *by* [`Engine`] and called *into* by whoever is driving
-/// it, so a caller can depend on this interface instead of the concrete
-/// [`Engine`] type. See [`WeakEngine`] for the shared, non-owning adapter
-/// every such caller uses to get one of these during [`Engine`]'s own
-/// construction, without creating a reference cycle.
-pub trait EngineService: Send + Sync {
-    /// See [`Engine::run`].
-    ///
-    /// # Errors
-    fn run(
-        &self,
-        identifier: &str,
-        params: Value,
-        options: Value,
-        context: &EngineInputContext,
-    ) -> error::Result<Value>;
-
-    /// See [`Engine::is_workflow_operation`].
-    fn is_workflow_operation(&self, identifier: &str, context: &EngineInputContext) -> bool;
-
-    /// See [`Engine::resolve_workflow`].
-    ///
-    /// # Errors
-    #[allow(
-        clippy::type_complexity,
-        reason = "mirrors Engine::resolve_workflow's own return shape"
-    )]
-    fn resolve_workflow(
-        &self,
-        identifier: &str,
-        context: &EngineInputContext,
-    ) -> error::Result<(
-        String,
-        String,
-        core_entities::entity::WorkflowService,
-        Arc<dyn WorkflowRunner>,
-    )>;
-
-    /// See [`Engine::resolve_data_connector`].
-    ///
-    /// # Errors
-    #[allow(
-        clippy::type_complexity,
-        reason = "mirrors Engine::resolve_data_connector's own return shape"
-    )]
-    fn resolve_data_connector(
-        &self,
-        identifier: &str,
-        context: &EngineInputContext,
-    ) -> error::Result<(
-        String,
-        String,
-        core_entities::entity::SwaggerService,
-        core_entities::entity::CommonApi,
-        Option<credential_entities::entity::Authentication>,
-        Arc<dyn AsyncDataConnectionRunner>,
-    )>;
-}
+// The `EngineService` primary/driving port itself now lives at
+// `core_entities::ports::engine::EngineService` - see [`WeakEngine`] for
+// the shared, non-owning adapter every caller uses to get one of these
+// during [`Engine`]'s own construction, without creating a reference
+// cycle.
 
 impl Engine {
     /// Creates an [`Engine`] with no adapters registered yet; use the
@@ -312,11 +252,7 @@ impl Engine {
             let api = service.common_api.as_ref().unwrap_or(&default_api);
             let creds = credentials.as_ref();
 
-            let bundle = DataConnectorBundle {
-                manifest: swagger,
-                api,
-                creds,
-            };
+            let bundle = DataConnectorBundle::new(swagger, api, creds);
             connector.run(
                 service_name,
                 operation_name,
@@ -756,7 +692,7 @@ impl EngineService for Engine {
 /// adapter (including this handle) *during* [`Engine`]'s own construction,
 /// via [`Arc::new_cyclic`]. A plain `Arc<Engine>` handed to each adapter at
 /// that point would be a strong reference cycle: `Engine` owns each adapter
-/// (as a boxed [`services::CodeRunner`]/etc.), and each adapter would hold a
+/// (as a boxed [`core_entities::ports::engine::CodeRunner`]/etc.), and each adapter would hold a
 /// strong reference straight back to the same `Engine` allocation - neither
 /// could ever be freed. `Weak` doesn't count toward the strong reference
 /// count, so it carries no ownership and creates no cycle: `Engine` has
@@ -1189,12 +1125,12 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl services::AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
+    impl AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
         async fn run(
             &self,
             name: &str,
             operation_name: &str,
-            _bundle: &services::DataConnectorBundle,
+            _bundle: &DataConnectorBundle,
             _params: Value,
             _options: Value,
             _ctx: &EngineInputContext,

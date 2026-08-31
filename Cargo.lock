@@ -108,7 +108,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "http",
  "jsonptr",
  "protobuf",
@@ -493,11 +492,15 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 name = "core_entities"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "credential_entities",
  "protobuf",
  "protobuf-codegen",
  "protobuf-json-mapping",
  "serde",
  "serde_json",
+ "thiserror",
  "walkdir",
 ]
 
@@ -755,7 +758,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "jmespath",
  "lazy_static",
  "regex",
@@ -1177,10 +1179,8 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "regex",
  "serde_json",
- "service_loader",
  "thiserror",
 ]
 
@@ -1277,7 +1277,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "lazy_static",
  "mini-v8",
  "regex",
@@ -1371,8 +1370,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 name = "local_file_loader"
 version = "0.1.0"
 dependencies = [
- "service_loader",
- "service_writer",
+ "core_entities",
  "thiserror",
 ]
 
@@ -2136,7 +2134,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "lazy_static",
  "pyo3",
  "regex",

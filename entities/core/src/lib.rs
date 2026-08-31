@@ -12,3 +12,4 @@
 include!(concat!(env!("OUT_DIR"), "/proto/mod.rs"));
 
 pub mod entity;
+pub mod ports;

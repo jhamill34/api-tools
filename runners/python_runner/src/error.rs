@@ -3,7 +3,7 @@
 
 use std::io;
 
-use execution_engine::error::ExecutionEngine;
+use core_entities::ports::engine::error::ExecutionEngine;
 use thiserror::Error;
 
 /// Failure modes of [`PyActionRunner::run`](crate::PyActionRunner).

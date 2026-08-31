@@ -1,10 +1,11 @@
-//! A local-filesystem adapter implementing [`service_loader`]'s [`Fetcher`]
-//! and [`service_writer`]'s [`Storage`] output ports.
+//! A local-filesystem adapter implementing [`core_entities::ports::loader`]'s
+//! [`Fetcher`] and [`core_entities::ports::writer`]'s [`Storage`] output
+//! ports.
 
 use std::{fs::File, path::PathBuf};
 
-use service_loader::Fetcher;
-use service_writer::Storage;
+use core_entities::ports::loader::Fetcher;
+use core_entities::ports::writer::Storage;
 
 /// Reads and writes files on the local filesystem, resolving every
 /// `location` relative to a fixed working directory.

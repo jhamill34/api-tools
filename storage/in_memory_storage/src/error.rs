@@ -1,7 +1,7 @@
 //! Errors produced by an [`OperationRepos`](crate::OperationRepos)
 //! repository.
 
-use service_loader::error::ServiceLoader;
+use core_entities::ports::loader::LoaderOutputError;
 use thiserror::Error;
 
 /// Failure modes of a [`Repository`](crate::repo::Repository) operation.
@@ -26,10 +26,10 @@ pub enum OperationRepo {
     },
 }
 
-impl From<OperationRepo> for ServiceLoader {
+impl From<OperationRepo> for LoaderOutputError {
     #[inline]
     fn from(val: OperationRepo) -> Self {
-        ServiceLoader::Other { source: val.into() }
+        LoaderOutputError::Other { source: val.into() }
     }
 }
 

@@ -11,7 +11,7 @@ use mini_v8::MiniV8;
 use std::{cell::RefCell, sync::Arc};
 
 use common_data_structures::log_writer::LogWriter;
-use execution_engine::services::CodeRunner;
+use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
 
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
@@ -94,20 +94,20 @@ fn wrap_source_code(source: &str) -> error::Result<String> {
 /// A [`CodeRunner`] that wraps and executes a JavaScript operation body in
 /// this thread's cached `MiniV8` interpreter (see [`thread_mini_v8`]),
 /// exposing an `api.run(id, params)` binding the script can use to invoke
-/// another operation on the shared [`execution_engine::Engine`].
+/// another operation on the shared [`EngineService`].
 pub struct JsActionRunner {
     /// Where the `api.run` binding logs each nested call it makes.
     logger: LogWriter,
 
     /// The engine used to resolve `api.run` calls made from JavaScript.
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
 }
 
 impl JsActionRunner {
     /// Creates a [`JsActionRunner`] that dispatches nested calls through
     /// `engine` and logs them to `logger`.
     #[inline]
-    pub fn new(engine: Arc<dyn execution_engine::EngineService>, logger: LogWriter) -> Self {
+    pub fn new(engine: Arc<dyn EngineService>, logger: LogWriter) -> Self {
         Self { logger, engine }
     }
 
@@ -121,7 +121,7 @@ impl JsActionRunner {
         _operation_name: &str,
         source_code: &str,
         params: serde_json::Value,
-        ctx: &execution_engine::services::EngineInputContext,
+        ctx: &EngineInputContext,
     ) -> error::Result<serde_json::Value> {
         let mv8 = thread_mini_v8();
 
@@ -147,7 +147,7 @@ impl JsActionRunner {
                 serde_json::Value::Null
             };
 
-            let context = execution_engine::services::EngineInputContext::new(
+            let context = EngineInputContext::new(
                 Some(name.clone()),
                 execution_id.clone(),
                 false,
@@ -192,8 +192,8 @@ impl CodeRunner for JsActionRunner {
         operation_name: &str,
         source_code: &str,
         params: serde_json::Value,
-        ctx: &execution_engine::services::EngineInputContext,
-    ) -> execution_engine::error::Result<serde_json::Value> {
+        ctx: &EngineInputContext,
+    ) -> engine::error::Result<serde_json::Value> {
         let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
         Ok(result)
     }

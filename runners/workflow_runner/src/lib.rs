@@ -1,7 +1,7 @@
 //! Adapts `prototypes/workflow_engine::WorkflowEngine` to
 //! `execution_engine`'s async `WorkflowRunner` output port - the concrete
 //! wiring that connects the standalone prototype crate to the daemon's
-//! real dispatch path (`Engine::run_workflow`). A [`CodeRunner`](execution_engine::services::CodeRunner)-style
+//! real dispatch path (`Engine::run_workflow`). A [`CodeRunner`](core_entities::ports::engine::CodeRunner)-style
 //! adapter crate like every other `runners/*` crate, just for the
 //! `Workflow` manifest kind instead.
 //!
@@ -52,9 +52,9 @@
 use std::{sync::Arc, time::Duration};
 
 use core_entities::entity::WorkflowService as WorkflowManifest;
-use execution_engine::{
-    error::ExecutionEngine,
-    services::{DataConnectorBundle, EngineInputContext, WorkflowRunner},
+use core_entities::ports::engine::{
+    self, error::ExecutionEngine, DataConnectorBundle, EngineInputContext, EngineService,
+    WorkflowRunner,
 };
 use mlua::LuaSerdeExt;
 use serde_json::Value;
@@ -75,7 +75,7 @@ struct WorkflowRequest {
     execution_id: String,
     manifest: WorkflowManifest,
     params: Value,
-    responder: oneshot::Sender<execution_engine::error::Result<Value>>,
+    responder: oneshot::Sender<engine::error::Result<Value>>,
 }
 
 /// Sends workflow-run requests to a dedicated single-threaded `LocalSet`
@@ -96,7 +96,7 @@ impl WorkflowAdapter {
     /// closes.
     #[must_use]
     pub fn spawn(
-        engine: Arc<dyn execution_engine::EngineService>,
+        engine: Arc<dyn EngineService>,
         logger: common_data_structures::log_writer::LogWriter,
     ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -116,7 +116,7 @@ impl WorkflowAdapter {
 /// boundary.
 fn run_dispatch_thread(
     mut receiver: mpsc::UnboundedReceiver<WorkflowRequest>,
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
 ) {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -146,9 +146,9 @@ fn run_dispatch_thread(
 /// entirely on the dedicated `LocalSet` thread - see the module docs.
 async fn run_one_workflow(
     request: &WorkflowRequest,
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
-) -> execution_engine::error::Result<Value> {
+) -> engine::error::Result<Value> {
     let manifest = &request.manifest;
 
     let timeout = if manifest.timeout_seconds == 0 {
@@ -201,7 +201,7 @@ fn install_api_run_binding(
     workflow_engine: &workflow_engine::WorkflowEngine,
     service_name: String,
     execution_id: String,
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
     logger: common_data_structures::log_writer::LogWriter,
 ) -> workflow_engine::error::Result<()> {
     workflow_engine.register_api_function("run", move |lua, args: mlua::MultiValue| {
@@ -241,7 +241,7 @@ fn install_api_run_binding(
 }
 
 /// Installs `api.call(id, params, options)` on `workflow_engine`, dispatching
-/// through `engine`'s registered [`AsyncDataConnectionRunner`](execution_engine::services::AsyncDataConnectionRunner)
+/// through `engine`'s registered [`AsyncDataConnectionRunner`](core_entities::ports::engine::AsyncDataConnectionRunner)
 /// (as a nested call from `service_name`'s running script within
 /// `execution_id`) directly on the workflow-dispatch thread's own async
 /// runtime - no `spawn_blocking` bridge needed here, unlike `api.run`,
@@ -254,7 +254,7 @@ fn install_api_call_binding(
     workflow_engine: &workflow_engine::WorkflowEngine,
     service_name: String,
     execution_id: String,
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
 ) -> workflow_engine::error::Result<()> {
     workflow_engine.register_api_function("call", move |lua, args: mlua::MultiValue| {
         let engine = Arc::clone(&engine);
@@ -305,7 +305,7 @@ impl WorkflowRunner for WorkflowAdapter {
         manifest: &WorkflowManifest,
         params: Value,
         ctx: &EngineInputContext,
-    ) -> execution_engine::error::Result<Value> {
+    ) -> engine::error::Result<Value> {
         if matches!(
             &manifest.source,
             Some(core_entities::entity::workflow_service::Source::ResourcePath(_))
@@ -338,7 +338,7 @@ impl WorkflowRunner for WorkflowAdapter {
 mod tests {
     use std::sync::Mutex;
 
-    use execution_engine::services::{CodeRunner, EngineLookup};
+    use core_entities::ports::engine::{AsyncDataConnectionRunner, CodeRunner, EngineLookup};
 
     use super::*;
 
@@ -367,7 +367,7 @@ mod tests {
         }
     }
 
-    fn empty_engine() -> Arc<dyn execution_engine::EngineService> {
+    fn empty_engine() -> Arc<dyn EngineService> {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
         let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(EmptyLookup);
@@ -438,7 +438,7 @@ mod tests {
             _source_code: &str,
             params: serde_json::Value,
             _ctx: &EngineInputContext,
-        ) -> execution_engine::error::Result<serde_json::Value> {
+        ) -> engine::error::Result<serde_json::Value> {
             self.calls
                 .lock()
                 .unwrap()
@@ -532,7 +532,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl execution_engine::services::AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
+    impl AsyncDataConnectionRunner for FakeAsyncDataConnectionRunner {
         async fn run(
             &self,
             name: &str,
@@ -541,7 +541,7 @@ mod tests {
             params: serde_json::Value,
             _options: serde_json::Value,
             _ctx: &EngineInputContext,
-        ) -> execution_engine::error::Result<serde_json::Value> {
+        ) -> engine::error::Result<serde_json::Value> {
             self.calls
                 .lock()
                 .unwrap()
@@ -562,7 +562,7 @@ mod tests {
         engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
             calls: Arc::clone(&calls),
         }));
-        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
+        let engine: Arc<dyn EngineService> = Arc::new(engine);
 
         let manifest = workflow_manifest("return api.call('other.op', { hello = 'world' })");
 
@@ -594,7 +594,7 @@ mod tests {
         engine.register_async_connector(Arc::new(FakeAsyncDataConnectionRunner {
             calls: Arc::clone(&calls),
         }));
-        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
+        let engine: Arc<dyn EngineService> = Arc::new(engine);
 
         let manifest = workflow_manifest(
             "local ok = pcall(function() return api.call('other.op', {}) end)\n\
@@ -631,7 +631,7 @@ mod tests {
                 calls: Arc::clone(&calls),
             }),
         );
-        let engine: Arc<dyn execution_engine::EngineService> = Arc::new(engine);
+        let engine: Arc<dyn EngineService> = Arc::new(engine);
 
         let manifest = workflow_manifest("return api.run('other.op', { hello = 'world' })");
 

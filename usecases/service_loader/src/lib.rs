@@ -13,33 +13,8 @@ use core_entities::entity::{
     service_manifest, service_manifest_latest, versioned_service_tree, ServiceManifestLatest,
     SwaggerOverrides, VersionedServiceTree,
 };
-use credential_entities::entity::Authentication;
+pub use core_entities::ports::loader::{Fetcher, LoaderOutput};
 use loaders::{load_configuration, load_credentials, load_service};
-
-/// An output port [`ServiceLoader`] writes loaded data to.
-pub trait LoaderOutput {
-    /// Stores a loaded service manifest under `id`.
-    ///
-    /// # Errors
-    fn handle_service(&mut self, id: &str, service: VersionedServiceTree) -> error::Result<()>;
-
-    /// Stores loaded credentials under `id`.
-    ///
-    /// # Errors
-    fn handle_credentials(&mut self, id: &str, credentials: Authentication) -> error::Result<()>;
-}
-
-/// An input port [`ServiceLoader`] reads from: opens a readable source for
-/// a given `location`.
-pub trait Fetcher<R>
-where
-    R: io::Read,
-{
-    /// Opens `location` for reading.
-    ///
-    /// # Errors
-    fn fetch(&self, location: &str) -> io::Result<R>;
-}
 
 /// Copies `$field` from `$source` onto `$sink` only if it's non-empty on
 /// `$source`, leaving `$sink`'s existing value untouched otherwise.
@@ -260,6 +235,8 @@ mod test {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
+    use credential_entities::entity::Authentication;
+
     use super::*;
 
     #[derive(Default)]
@@ -296,7 +273,7 @@ mod test {
             &mut self,
             _id: &str,
             _service: VersionedServiceTree,
-        ) -> error::Result<()> {
+        ) -> core_entities::ports::loader::Result<()> {
             Ok(())
         }
 
@@ -304,7 +281,7 @@ mod test {
             &mut self,
             _id: &str,
             credentials: Authentication,
-        ) -> error::Result<()> {
+        ) -> core_entities::ports::loader::Result<()> {
             self.credentials = Some(credentials);
             Ok(())
         }

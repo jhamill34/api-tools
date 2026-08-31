@@ -5,21 +5,10 @@
 use std::{collections::HashMap, io};
 
 use core_entities::entity::{self as service, VersionedServiceTree};
+pub use core_entities::ports::writer::Storage;
 use credential_entities::entity::Authentication;
 
 pub mod error;
-
-/// An output port [`ServiceWriter`] writes to: opens a writable destination
-/// for a given `location`.
-pub trait Storage<W>
-where
-    W: io::Write,
-{
-    /// Opens `location` for writing.
-    ///
-    /// # Errors
-    fn store(&self, location: &str) -> io::Result<W>;
-}
 
 /// Writes a service manifest or its credentials out through a [`Storage`]
 /// adapter.

@@ -85,6 +85,15 @@ pub enum ServiceLoader {
         /// The wrapped error from an output port implementation.
         source: anyhow::Error,
     },
+
+    /// A [`LoaderOutput`](core_entities::ports::loader::LoaderOutput) sink
+    /// failed to store loaded data.
+    #[error(transparent)]
+    LoaderOutput {
+        /// The underlying output-port error.
+        #[from]
+        source: core_entities::ports::loader::LoaderOutputError,
+    },
 }
 
 /// Shorthand for a [`Result`](std::result::Result) using [`ServiceLoader`]

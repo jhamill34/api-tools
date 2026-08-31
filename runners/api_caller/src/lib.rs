@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use base64::Engine as _;
 use common_data_structures::log_writer::LogWriter;
 use core_entities::entity::{Operation, Pagination, Parameter, SwaggerService};
-use credential_entities::entity::Authentication;
-use execution_engine::services::{
-    AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext,
+use core_entities::ports::engine::{
+    self, AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle,
+    EngineInputContext,
 };
+use credential_entities::entity::Authentication;
 use http::{HeaderMap, HeaderName, HeaderValue};
 
 /// Converts a scalar JSON value to its string form, for use as a header,
@@ -850,7 +851,7 @@ impl DataConnectionRunner for APICaller {
         params: serde_json::Value,
         options: serde_json::Value,
         ctx: &EngineInputContext,
-    ) -> execution_engine::error::Result<serde_json::Value> {
+    ) -> engine::error::Result<serde_json::Value> {
         let result = self.run_internal(name, operation_name, bundle, &params, &options, ctx)?;
         Ok(result)
     }
@@ -862,7 +863,7 @@ impl DataConnectionRunner for APICaller {
 /// [`reqwest::blocking::Client`], so a call never occupies a thread while
 /// waiting on the network. See [`AsyncDataConnectionRunner`]'s docs for why
 /// this exists as a genuinely separate dispatch path rather than being
-/// reached through [`Engine::run`](execution_engine::Engine::run).
+/// reached through `EngineService::run`.
 pub struct AsyncAPICaller {
     /// Where each request/response is logged.
     log: LogWriter,
@@ -1010,7 +1011,7 @@ impl AsyncDataConnectionRunner for AsyncAPICaller {
         params: serde_json::Value,
         options: serde_json::Value,
         ctx: &EngineInputContext,
-    ) -> execution_engine::error::Result<serde_json::Value> {
+    ) -> engine::error::Result<serde_json::Value> {
         let result = self
             .run_internal(name, operation_name, bundle, &params, &options, ctx)
             .await?;
