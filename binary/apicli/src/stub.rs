@@ -5,7 +5,10 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail};
 use common_data_structures::trie::Trie;
-use core_entities::service::VersionedServiceTree;
+use core_entities::entity::{
+    common_parameter::ParameterType, schema_object::SchemaType, service_manifest_latest,
+    ApiResponse, CommonApi, MediaType, Schema, SchemaObject, SchemaValue, VersionedServiceTree,
+};
 
 /// Builds a sample input payload for `operation`, driven by the service's
 /// manifest type: parameter/schema defaults for an `OpenAPI` (`Swagger`)
@@ -17,19 +20,21 @@ pub fn get_input(
     operation: &str,
     required: bool,
 ) -> anyhow::Result<serde_json::Value> {
-    let service = service.v1();
-    let manifest = &service.manifest.v2().value;
+    let v1 = service.v1();
+    let manifest = v1.manifest_latest();
 
     let mut input_example = serde_json::Map::new();
 
-    match manifest {
-        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
-            let operation = service
-                .commonApi
+    match &manifest.value {
+        Some(service_manifest_latest::Value::Swagger(_)) => {
+            let empty_api = CommonApi::default();
+            let api = v1.common_api.as_ref().unwrap_or(&empty_api);
+
+            let operation = api
                 .operations
                 .get(operation)
                 .ok_or_else(|| anyhow!("Operation not found"))?;
-            let types = &service.commonApi.schemas;
+            let types = &api.schemas;
 
             for parameter in &operation.parameter {
                 if required && !parameter.required {
@@ -38,7 +43,7 @@ pub fn get_input(
                 let mut seen = HashMap::new();
                 let mut path = vec![parameter.name.clone()];
                 let default_value = schema_to_value(
-                    &parameter.schema.value,
+                    parameter.schema.as_ref(),
                     types,
                     &mut seen,
                     &mut path,
@@ -47,9 +52,9 @@ pub fn get_input(
                 input_example.insert(parameter.name.clone(), default_value);
             }
 
-            if operation.requestBody.is_some() {
-                let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
-                for (key, value) in &operation.requestBody.content {
+            if let Some(request_body) = &operation.request_body {
+                let mut trie: Trie<MediaType> = Trie::default();
+                for (key, value) in &request_body.content {
                     trie.insert(key, value.clone());
                 }
 
@@ -58,46 +63,46 @@ pub fn get_input(
                     let mut path = vec!["$body".to_owned()];
                     input_example.insert(
                         "$body".to_owned(),
-                        schema_to_value(
-                            &content.schema.value,
-                            types,
-                            &mut seen,
-                            &mut path,
-                            required,
-                        ),
+                        schema_to_value(content.schema.as_ref(), types, &mut seen, &mut path, required),
                     );
                 }
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
+        Some(service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
                 .find(|op| op.id == operation)
-                .map(core_entities::service::action_service::ActionOperation::function)
+                .and_then(|op| op.function.as_ref())
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
             for param in &operation.parameters {
                 if required && !param.required {
                     continue;
                 }
-                let default_value = parameter_to_value(param.type_);
+                let default_value = parameter_to_value(param.r#type);
                 input_example.insert(param.name.clone(), default_value);
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(manifest)) => {
+        Some(service_manifest_latest::Value::ApiWrapped(manifest)) => {
             for param in &manifest.inputs {
-                let default_value = parameter_to_value(param.param.type_);
-                input_example.insert(param.param.name.clone(), default_value);
+                let (param_type, param_name) = param.param.as_ref().map_or_else(
+                    || (ParameterType::Unset, String::new()),
+                    |p| (p.r#type, p.name.clone()),
+                );
+                let default_value = parameter_to_value(param_type);
+                input_example.insert(param_name, default_value);
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
-        _ => bail!("Unknown manifest type"),
+        Some(service_manifest_latest::Value::Workflow(_)) | None => {
+            bail!("Unknown manifest type")
+        }
     }
 
     Ok(serde_json::Value::Object(input_example))
@@ -114,71 +119,67 @@ pub fn get_output(
     service: &VersionedServiceTree,
     operation: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let service = service.v1();
-    let manifest = &service.manifest.v2().value;
+    let v1 = service.v1();
+    let manifest = v1.manifest_latest();
 
-    match manifest {
-        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
-            let operation = service
-                .commonApi
+    match &manifest.value {
+        Some(service_manifest_latest::Value::Swagger(_)) => {
+            let empty_api = CommonApi::default();
+            let api = v1.common_api.as_ref().unwrap_or(&empty_api);
+
+            let operation = api
                 .operations
                 .get(operation)
                 .ok_or_else(|| anyhow!("Operation not found"))?;
-            let types = &service.commonApi.schemas;
+            let types = &api.schemas;
 
-            if operation.apiResponses.is_some() {
-                let mut status_codes: Trie<core_entities::service::ApiResponse> = Trie::default();
-                for (key, value) in &operation.apiResponses.apiResponses {
-                    status_codes.insert(key, value.clone());
-                }
+            let Some(api_responses) = &operation.api_responses else {
+                return Ok(serde_json::Value::Object(serde_json::Map::new()));
+            };
 
-                if let Some(response) = status_codes.find("200") {
-                    let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
-                    for (key, value) in &response.content {
-                        trie.insert(key, value.clone());
-                    }
-
-                    if let Some(content) = trie.find("application/json") {
-                        let mut seen = HashMap::new();
-                        let mut path = vec![];
-
-                        let output = schema_to_value(
-                            &content.schema.value,
-                            types,
-                            &mut seen,
-                            &mut path,
-                            false,
-                        );
-                        Ok(output)
-                    } else {
-                        Ok(serde_json::Value::Object(serde_json::Map::new()))
-                    }
-                } else {
-                    Ok(serde_json::Value::Object(serde_json::Map::new()))
-                }
-            } else {
-                Ok(serde_json::Value::Object(serde_json::Map::new()))
+            let mut status_codes: Trie<ApiResponse> = Trie::default();
+            for (key, value) in &api_responses.api_responses {
+                status_codes.insert(key, value.clone());
             }
+
+            let Some(response) = status_codes.find("200") else {
+                return Ok(serde_json::Value::Object(serde_json::Map::new()));
+            };
+
+            let mut trie: Trie<MediaType> = Trie::default();
+            for (key, value) in &response.content {
+                trie.insert(key, value.clone());
+            }
+
+            let Some(content) = trie.find("application/json") else {
+                return Ok(serde_json::Value::Object(serde_json::Map::new()));
+            };
+
+            let mut seen = HashMap::new();
+            let mut path = vec![];
+
+            let output = schema_to_value(content.schema.as_ref(), types, &mut seen, &mut path, false);
+            Ok(output)
         }
-        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
+        Some(service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
                 .find(|op| op.id == operation)
-                .map(core_entities::service::action_service::ActionOperation::function)
+                .and_then(|op| op.function.as_ref())
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
             let mut output_examples = serde_json::Map::new();
             for param in &operation.outputs {
-                let default_value = parameter_to_value(param.type_);
+                let default_value = parameter_to_value(param.r#type);
                 output_examples.insert(param.name.clone(), default_value);
             }
 
             Ok(serde_json::Value::Object(output_examples))
         }
-        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(manifest)) => {
+        Some(service_manifest_latest::Value::ApiWrapped(manifest)) => {
             let mut output_examples = serde_json::Map::new();
-            for param in &manifest.outputSelectors {
+            for param in &manifest.output_selectors {
                 // TODO: use JMES path to determine type
                 let default_value = serde_json::Value::String("<UNKNOWN>".into());
                 output_examples.insert(param.name.clone(), default_value);
@@ -186,41 +187,30 @@ pub fn get_output(
 
             Ok(serde_json::Value::Object(output_examples))
         }
-        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
-        _ => bail!("Unknown manifest type"),
+        Some(service_manifest_latest::Value::Workflow(_)) | None => {
+            bail!("Unknown manifest type")
+        }
     }
 }
 
 /// Produces a zero-value/placeholder JSON value matching `param`'s type.
 /// An unrecognized type produces `"<UNKNOWN>"` rather than panicking.
-pub fn parameter_to_value(
-    param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
-) -> serde_json::Value {
-    match param.enum_value_or_default() {
-        core_entities::service::common_parameter::ParameterType::UNSET => {
-            serde_json::Value::String("<UNKNOWN>".to_owned())
-        }
-        core_entities::service::common_parameter::ParameterType::STRING => {
-            serde_json::Value::String(String::default())
-        }
-        core_entities::service::common_parameter::ParameterType::INTEGER
-        | core_entities::service::common_parameter::ParameterType::NUMBER => {
+pub fn parameter_to_value(param: ParameterType) -> serde_json::Value {
+    match param {
+        ParameterType::Unset => serde_json::Value::String("<UNKNOWN>".to_owned()),
+        ParameterType::String => serde_json::Value::String(String::default()),
+        ParameterType::Integer | ParameterType::Number => {
             serde_json::Value::Number(serde_json::Number::from(0_i32))
         }
-        core_entities::service::common_parameter::ParameterType::BOOLEAN => {
-            serde_json::Value::Bool(false)
-        }
-        core_entities::service::common_parameter::ParameterType::OBJECT => {
-            serde_json::Value::Object(serde_json::Map::new())
-        }
-        core_entities::service::common_parameter::ParameterType::ARRAY => {
-            serde_json::Value::Array(vec![])
-        }
+        ParameterType::Boolean => serde_json::Value::Bool(false),
+        ParameterType::Object => serde_json::Value::Object(serde_json::Map::new()),
+        ParameterType::Array => serde_json::Value::Array(vec![]),
     }
 }
 
@@ -228,18 +218,17 @@ pub fn parameter_to_value(
 /// `types` (tracking `seen` references to print `$ref:{path}` instead of
 /// recursing forever on a cycle) or delegates to
 /// [`schema_object_to_value`] for an inline schema object. `path` tracks
-/// the current field path, for cycle-reference display.
+/// the current field path, for cycle-reference display. A `None`/empty
+/// `{}` schema (see [`Schema`]'s doc comment) produces an empty object.
 pub fn schema_to_value(
-    schema: &Option<core_entities::service::schema::Value>,
-    types: &HashMap<String, core_entities::service::Schema>,
+    schema: Option<&Schema>,
+    types: &HashMap<String, Schema>,
     seen: &mut HashMap<String, String>,
     path: &mut Vec<String>,
     required: bool,
 ) -> serde_json::Value {
-    match schema {
-        Some(core_entities::service::schema::Value::Ref(reference)) => {
-            let schema = types.get(reference).cloned().and_then(|s| s.value);
-
+    match schema.and_then(|s| s.value.as_ref()) {
+        Some(SchemaValue::Ref(reference)) => {
             if seen.contains_key(reference) {
                 return serde_json::Value::String(format!(
                     "$ref:{}",
@@ -250,14 +239,16 @@ pub fn schema_to_value(
             }
 
             seen.insert(reference.clone(), path.join("."));
-            let schema = schema_to_value(&schema, types, seen, path, required);
+            let value = schema_to_value(types.get(reference), types, seen, path, required);
             seen.remove(reference);
-            schema
+            value
         }
-        Some(core_entities::service::schema::Value::SchemaObject(schema)) => {
+        Some(SchemaValue::SchemaObject(schema)) => {
             schema_object_to_value(schema, types, seen, path, required)
         }
-        _ => serde_json::Value::Object(serde_json::Map::new()),
+        Some(SchemaValue::AllOf(_) | SchemaValue::AnyOf(_) | SchemaValue::OneOf(_)) | None => {
+            serde_json::Value::Object(serde_json::Map::new())
+        }
     }
 }
 
@@ -267,27 +258,20 @@ pub fn schema_to_value(
 /// recursing into the item schema. An unrecognized/unset type produces
 /// `"<UNKNOWN>"` rather than panicking.
 pub fn schema_object_to_value(
-    schema: &core_entities::service::SchemaObject,
-    types: &HashMap<String, core_entities::service::Schema>,
+    schema: &SchemaObject,
+    types: &HashMap<String, Schema>,
     seen: &mut HashMap<String, String>,
     path: &mut Vec<String>,
     is_required: bool,
 ) -> serde_json::Value {
-    match schema.type_.enum_value_or_default() {
-        core_entities::service::schema_object::SchemaType::SCHEMA_TYPE_NONE => {
-            serde_json::Value::String("<UNKNOWN>".to_owned())
-        }
-        core_entities::service::schema_object::SchemaType::STRING => {
-            serde_json::Value::String(String::default())
-        }
-        core_entities::service::schema_object::SchemaType::NUMBER
-        | core_entities::service::schema_object::SchemaType::INTEGER => {
+    match schema.r#type {
+        SchemaType::None => serde_json::Value::String("<UNKNOWN>".to_owned()),
+        SchemaType::String => serde_json::Value::String(String::default()),
+        SchemaType::Number | SchemaType::Integer => {
             serde_json::Value::Number(serde_json::Number::from(0_i32))
         }
-        core_entities::service::schema_object::SchemaType::BOOLEAN => {
-            serde_json::Value::Bool(Default::default())
-        }
-        core_entities::service::schema_object::SchemaType::OBJECT => {
+        SchemaType::Boolean => serde_json::Value::Bool(bool::default()),
+        SchemaType::Object => {
             let mut properties = serde_json::Map::new();
             let required: HashSet<String> = schema.required.iter().cloned().collect();
 
@@ -295,20 +279,20 @@ pub fn schema_object_to_value(
                 if is_required && !required.contains(key) {
                     continue;
                 }
-                path.push(key.to_string());
+                path.push(key.clone());
                 properties.insert(
-                    key.to_string(),
-                    schema_to_value(&value.value, types, seen, path, is_required),
+                    key.clone(),
+                    schema_to_value(Some(value), types, seen, path, is_required),
                 );
                 path.pop();
             }
 
             serde_json::Value::Object(properties)
         }
-        core_entities::service::schema_object::SchemaType::ARRAY => {
+        SchemaType::Array => {
             path.push("0".to_owned());
             let items = vec![schema_to_value(
-                &schema.items.value,
+                schema.items.as_deref(),
                 types,
                 seen,
                 path,
@@ -322,21 +306,19 @@ pub fn schema_object_to_value(
 
 #[cfg(test)]
 mod tests {
-    use protobuf::EnumOrUnknown;
-
     use super::*;
 
     #[test]
-    fn parameter_to_value_does_not_panic_on_an_unrecognized_parameter_type() {
-        let value = parameter_to_value(EnumOrUnknown::from_i32(999));
+    fn parameter_to_value_does_not_panic_on_an_unset_parameter_type() {
+        let value = parameter_to_value(ParameterType::Unset);
 
         assert_eq!(value, serde_json::Value::String("<UNKNOWN>".to_owned()));
     }
 
     #[test]
-    fn schema_object_to_value_does_not_panic_on_an_unrecognized_schema_type() {
-        let schema = core_entities::service::SchemaObject {
-            type_: EnumOrUnknown::from_i32(999),
+    fn schema_object_to_value_does_not_panic_on_an_unset_schema_type() {
+        let schema = SchemaObject {
+            r#type: SchemaType::None,
             ..Default::default()
         };
         let types = HashMap::new();

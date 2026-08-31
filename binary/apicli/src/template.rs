@@ -104,7 +104,7 @@ fn lexer<T: AsRef<[u8]>>(input: T) -> anyhow::Result<Vec<InputTokens>> {
         match current {
             b'<' => {
                 walker.advance();
-                if walker.match_tokens(&[b'-']) {
+                if walker.match_tokens(b"-") {
                     tokens.push(InputTokens::OutputArrow);
                 } else {
                     tokens.push(InputTokens::Lt);
@@ -128,7 +128,7 @@ fn lexer<T: AsRef<[u8]>>(input: T) -> anyhow::Result<Vec<InputTokens>> {
             }
             b'-' => {
                 walker.advance();
-                if walker.match_tokens(&[b'>']) {
+                if walker.match_tokens(b">") {
                     tokens.push(InputTokens::InputArrow);
                 } else {
                     return Err(anyhow::anyhow!(
@@ -408,7 +408,7 @@ pub enum PathKey {
 impl ToString for PathKey {
     fn to_string(&self) -> String {
         match self {
-            PathKey::Identifier(key) => key.to_string(),
+            PathKey::Identifier(key) => key.clone(),
             PathKey::Integer(key) => key.to_string(),
             PathKey::String(key) => format!("\"{key}\""),
         }

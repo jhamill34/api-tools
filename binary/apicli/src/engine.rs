@@ -18,15 +18,13 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _};
-use core_entities::service::VersionedServiceTree;
-use credential_entities::credentials::Authentication;
+use core_entities::entity::VersionedServiceTree;
+use credential_entities::entity::Authentication;
 use engine_entities::engine::{
     engine_client::EngineClient, GetRunResultRequest, GetSerivceRequest, ListRequest,
     RunServiceRequest, SaveServiceRequest,
 };
 use oauth_flow::Authenticator;
-use protobuf::Message;
-use protobuf_json_mapping::PrintOptions;
 use tonic::{transport::Channel, Request};
 
 use crate::{
@@ -110,15 +108,11 @@ impl Cli {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
 
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
-        let service = service.v1();
-        let manifest = service.manifest.v2();
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
+        let v1 = service.v1();
+        let manifest = v1.manifest_latest();
 
-        let options = PrintOptions {
-            always_output_default_values: true,
-            ..Default::default()
-        };
-        let manifest = protobuf_json_mapping::print_to_string_with_options(manifest, &options)?;
+        let manifest = serde_json::to_string_pretty(&manifest)?;
         println!("{manifest}");
         Ok(())
     }
@@ -137,10 +131,10 @@ impl Cli {
         let credentials = response
             .raw_credentials
             .ok_or_else(|| anyhow!("Expected the service to have credentials"))?;
-        let credentials = Authentication::parse_from_bytes(&credentials)?;
+        let credentials: Authentication = serde_json::from_slice(&credentials)?;
 
         let credentials = Arc::new(Mutex::new(credentials));
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
 
         let auth = Authenticator::new(base_path, key_path, cert_path);
         auth.start(name.clone(), service, Arc::clone(&credentials))
@@ -150,7 +144,7 @@ impl Cli {
             let credentials = credentials
                 .lock()
                 .map_err(|e| anyhow!("Credentials Lock has been poisoned: {e}"))?;
-            credentials.write_to_bytes()?
+            serde_json::to_vec(&*credentials)?
         };
 
         let save_request = Request::new(SaveServiceRequest {
@@ -259,7 +253,7 @@ impl Cli {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
 
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
 
         let stub = get_input(&service, operation, required)?;
         let stub = serde_json::to_string_pretty(&stub)?;
@@ -286,7 +280,7 @@ impl Cli {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
 
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
 
         let stub = get_output(&service, operation)?;
         let stub = serde_json::to_string_pretty(&stub)?;
@@ -314,7 +308,7 @@ impl Cli {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
 
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
 
         let paths = get_input_paths(&service, operation, required)?;
 
@@ -349,7 +343,7 @@ impl Cli {
         let request = Request::new(GetSerivceRequest { name });
         let response = self.client.get_service(request).await?.into_inner();
 
-        let service = VersionedServiceTree::parse_from_bytes(&response.raw_service)?;
+        let service: VersionedServiceTree = serde_json::from_slice(&response.raw_service)?;
 
         let paths = get_output_paths(&service, operation)?;
 

@@ -19,8 +19,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use core_entities::service::VersionedServiceTree;
-use credential_entities::credentials::Authentication;
+use core_entities::entity::{service_manifest_latest, VersionedServiceTree};
+use credential_entities::entity::Authentication;
 use dotenv::dotenv;
 use engine_entities::engine::{
     engine_server::{Engine, EngineServer},
@@ -32,7 +32,6 @@ use engine_entities::engine::{
 use execution_engine::services::EngineLookup;
 use in_memory_storage::{repo::InMemoryRepository, OperationRepos};
 use local_file_loader::LocalFileFetcher;
-use protobuf::Message;
 use service_writer::{ServiceWriter, ServiceWriterPort};
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -87,37 +86,45 @@ impl Engine for ApiDaemon {
         // The Input Port for Repository
         for id in repo.list() {
             if let Some(service) = repo.get(&id) {
-                let service = service.v1();
+                let v1 = service.v1();
+                let manifest = v1.manifest_latest();
 
-                let manifest = service.manifest.v2();
-                if manifest.has_swagger() {
-                    for op_name in service.commonApi.operations.keys() {
+                match &manifest.value {
+                    Some(service_manifest_latest::Value::Swagger(_)) => {
+                        let operations = v1
+                            .common_api
+                            .as_ref()
+                            .map(|api| api.operations.keys())
+                            .into_iter()
+                            .flatten();
+                        for op_name in operations {
+                            items.push(ListItem {
+                                name: format!("(swagger) {id}.{op_name}"),
+                            });
+                        }
+                    }
+                    Some(service_manifest_latest::Value::Action(action)) => {
+                        for op in &action.operations {
+                            items.push(ListItem {
+                                name: format!("(action) {id}.{}", op.id),
+                            });
+                        }
+                    }
+                    Some(service_manifest_latest::Value::ApiWrapped(_)) => {
                         items.push(ListItem {
-                            name: format!("(swagger) {id}.{op_name}"),
+                            name: format!("(wrapped) {id}.execute"),
                         });
                     }
-                }
-
-                if manifest.has_action() {
-                    let manifest = manifest.action();
-
-                    for op in &manifest.operations {
+                    Some(service_manifest_latest::Value::SimpleCode(_)) => {
                         items.push(ListItem {
-                            name: format!("(action) {id}.{}", op.id),
+                            name: format!("(code) {id}.execute"),
                         });
                     }
-                }
-
-                if manifest.has_apiWrapped() {
-                    items.push(ListItem {
-                        name: format!("(wrapped) {id}.execute"),
-                    });
-                }
-
-                if manifest.has_simpleCode() {
-                    items.push(ListItem {
-                        name: format!("(code) {id}.execute"),
-                    });
+                    Some(
+                        service_manifest_latest::Value::ScriptedAction(_)
+                        | service_manifest_latest::Value::Workflow(_),
+                    )
+                    | None => {}
                 }
             }
             // Else log
@@ -147,11 +154,10 @@ impl Engine for ApiDaemon {
             (service, creds)
         };
 
-        let raw_service = service
-            .write_to_bytes()
-            .map_err(|e| Status::from_error(Box::new(e)))?;
+        let raw_service =
+            serde_json::to_vec(&service).map_err(|e| Status::from_error(Box::new(e)))?;
         let raw_credentials = credentials
-            .map(|c| c.write_to_bytes())
+            .map(|c| serde_json::to_vec(&c))
             .transpose()
             .map_err(|e| Status::from_error(Box::new(e)))?;
 
@@ -178,15 +184,15 @@ impl Engine for ApiDaemon {
         let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
 
         if let Some(service) = req.raw_service {
-            let service = VersionedServiceTree::parse_from_bytes(&service)
-                .map_err(|e| Status::from_error(Box::new(e)))?;
+            let service: VersionedServiceTree =
+                serde_json::from_slice(&service).map_err(|e| Status::from_error(Box::new(e)))?;
             writer
                 .store_service(&service, &storage, false)
                 .map_err(|e| Status::from_error(Box::new(e)))?;
         }
 
         if let Some(credentials) = req.raw_credentials {
-            let credentials = Authentication::parse_from_bytes(&credentials)
+            let credentials: Authentication = serde_json::from_slice(&credentials)
                 .map_err(|e| Status::from_error(Box::new(e)))?;
 
             writer
