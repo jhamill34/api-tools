@@ -12,9 +12,6 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 jsonptr = { workspace = true }
 uriparse = "0.6"
 
-protobuf = { workspace = true }
-protobuf-json-mapping = { workspace = true }
-
 credential_entities = { path = "../../entities/credentials" }
 core_entities = { path = "../../entities/core" }
 

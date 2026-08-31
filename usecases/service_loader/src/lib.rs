@@ -82,7 +82,7 @@ pub fn merge(
         if base_path.contains("{{baseUrl}}") {
             base_path = base_path.replace("{{baseUrl}}", &overrides.base_url);
         } else {
-            base_path = overrides.base_url.clone();
+            base_path.clone_from(&overrides.base_url);
         }
     }
 

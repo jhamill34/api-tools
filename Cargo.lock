@@ -2638,8 +2638,6 @@ dependencies = [
  "core_entities",
  "credential_entities",
  "jsonptr",
- "protobuf",
- "protobuf-json-mapping",
  "serde",
  "serde_json",
  "serde_yaml",
