@@ -32,6 +32,62 @@ pub enum Authentication {
     MultiHeader(MultiHeaderCredentials),
 }
 
+impl Authentication {
+    /// Returns the basic-auth credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_basic(&self) -> Option<&BasicCredentials> {
+        match self {
+            Self::Basic(v) => Some(v),
+            Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+        }
+    }
+
+    /// Returns the header credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_header(&self) -> Option<&HeaderCredentials> {
+        match self {
+            Self::Header(v) => Some(v),
+            Self::Basic(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+        }
+    }
+
+    /// Returns the query credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_query(&self) -> Option<&QueryCredentials> {
+        match self {
+            Self::Query(v) => Some(v),
+            Self::Basic(_) | Self::Header(_) | Self::Path(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+        }
+    }
+
+    /// Returns the path credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_path(&self) -> Option<&PathCredentials> {
+        match self {
+            Self::Path(v) => Some(v),
+            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Oauth(_) | Self::MultiHeader(_) => None,
+        }
+    }
+
+    /// Returns the OAuth credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_oauth(&self) -> Option<&OAuthCredentials> {
+        match self {
+            Self::Oauth(v) => Some(v),
+            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::MultiHeader(_) => None,
+        }
+    }
+
+    /// Returns the multi-header credentials, if that's this value's shape.
+    #[must_use]
+    pub fn as_multi_header(&self) -> Option<&MultiHeaderCredentials> {
+        match self {
+            Self::MultiHeader(v) => Some(v),
+            Self::Basic(_) | Self::Header(_) | Self::Query(_) | Self::Path(_) | Self::Oauth(_) => None,
+        }
+    }
+}
+
 /// Username/password basic auth credentials.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

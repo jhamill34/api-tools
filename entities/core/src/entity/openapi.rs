@@ -146,6 +146,18 @@ pub mod pagination {
         JmesPath(String),
     }
 
+    impl ExtendedPath {
+        /// Returns the `JMESPath` expression, or `""` if this path is a
+        /// [`ExtendedPath::ColumnPath`] instead.
+        #[must_use]
+        pub fn jmes_path(&self) -> &str {
+            match self {
+                Self::JmesPath(s) => s,
+                Self::ColumnPath(_) => "",
+            }
+        }
+    }
+
     /// Cursor-per-page pagination, possibly with multiple cursor values in
     /// play at once.
     #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

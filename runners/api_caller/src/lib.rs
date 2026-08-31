@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use common_data_structures::log_writer::LogWriter;
-use core_entities::service::{pagination, Operation, Parameter, SwaggerService};
-use credential_entities::credentials::Authentication;
+use core_entities::entity::{Operation, Pagination, Parameter, SwaggerService};
+use credential_entities::entity::Authentication;
 use execution_engine::services::{
     AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext,
 };
@@ -21,7 +21,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 /// unambiguous scalar representation.
 fn simplify_value(value: &serde_json::Value) -> error::Result<String> {
     match value {
-        serde_json::Value::String(val) => Ok(val.to_string()),
+        serde_json::Value::String(val) => Ok(val.clone()),
         serde_json::Value::Bool(val) => Ok(val.to_string()),
         serde_json::Value::Number(val) => Ok(val.to_string()),
         serde_json::Value::Null => Ok("null".to_owned()),
@@ -38,7 +38,7 @@ where
     I: Iterator<Item = (&'item String, &'item serde_json::Value)>,
 {
     values
-        .map(|(key, value)| Ok((key.to_string(), simplify_value(value)?)))
+        .map(|(key, value)| Ok((key.clone(), simplify_value(value)?)))
         .collect()
 }
 
@@ -82,92 +82,57 @@ fn resolve_total_limit(options: &serde_json::Value) -> i32 {
 /// next-URL-based (which has no separate results path to extract).
 fn find_results<'item>(
     result: &'item serde_json::Value,
-    pagination_config: &Option<pagination::Value>,
+    pagination_config: Option<&Pagination>,
 ) -> error::Result<&'item serde_json::Value> {
-    let result = if let Some(pagination) = pagination_config {
-        match pagination {
-            core_entities::service::pagination::Value::PageOffset(page_offset) => {
-                let path = page_offset.resultsPath.jmesPath();
-                let path = path
-                    .strip_prefix(constants::RESPONSE_BODY_PREFIX)
-                    .unwrap_or(path);
-
-                let path = if path.starts_with('/') {
-                    path.to_owned()
-                } else {
-                    format!("/{path}")
-                };
-
-                if path == "/" {
-                    result
-                } else {
-                    let path = path.parse::<jsonptr::Pointer>()?;
-                    path.resolve(result)?
-                }
-            }
-            core_entities::service::pagination::Value::MultiCursor(cursor) => {
-                let path = cursor.resultsPath.jmesPath();
-                let path = path
-                    .strip_prefix(constants::RESPONSE_BODY_PREFIX)
-                    .unwrap_or(path);
-
-                let path = if path.starts_with('/') {
-                    path.to_owned()
-                } else {
-                    format!("/{path}")
-                };
-
-                if path == "/" {
-                    result
-                } else {
-                    let path = path.parse::<jsonptr::Pointer>()?;
-                    path.resolve(result)?
-                }
-            }
-            core_entities::service::pagination::Value::Offset(offset) => {
-                let path = offset.resultsPath.jmesPath();
-                let path = path
-                    .strip_prefix(constants::RESPONSE_BODY_PREFIX)
-                    .unwrap_or(path);
-
-                let path = if path.starts_with('/') {
-                    path.to_owned()
-                } else {
-                    format!("/{path}")
-                };
-
-                if path == "/" {
-                    result
-                } else {
-                    let path = path.parse::<jsonptr::Pointer>()?;
-                    path.resolve(result)?
-                }
-            }
-            core_entities::service::pagination::Value::Unpaginated(unpaginated) => {
-                let path = unpaginated.resultsPath.jmesPath();
-                let path = path
-                    .strip_prefix(constants::RESPONSE_BODY_PREFIX)
-                    .unwrap_or(path);
-
-                let path = if path.starts_with('/') {
-                    path.to_owned()
-                } else {
-                    format!("/{path}")
-                };
-
-                if path == "/" {
-                    result
-                } else {
-                    let path = path.parse::<jsonptr::Pointer>()?;
-                    path.resolve(result)?
-                }
-            }
-            core_entities::service::pagination::Value::NextUrl(_) | _ => result,
+    let results_path = match pagination_config {
+        Some(Pagination::PageOffset(page_offset)) => {
+            page_offset.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
         }
-    } else {
-        result
+        Some(Pagination::MultiCursor(cursor)) => {
+            cursor.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
+        }
+        Some(Pagination::Offset(offset)) => offset.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path),
+        Some(Pagination::Unpaginated(unpaginated)) => {
+            unpaginated.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
+        }
+        Some(Pagination::NextUrl(_)) | None => None,
     };
-    Ok(result)
+
+    let Some(path) = results_path else {
+        return Ok(result);
+    };
+
+    let path = path
+        .strip_prefix(constants::RESPONSE_BODY_PREFIX)
+        .unwrap_or(path);
+
+    let path = if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    };
+
+    if path == "/" {
+        Ok(result)
+    } else {
+        let path = path.parse::<jsonptr::Pointer>()?;
+        Ok(path.resolve(result)?)
+    }
+}
+
+/// Looks up `key` in `defined_auth`'s configured params as a plain string,
+/// erroring if it's absent - the shared body of every [`APICallState::handle_auth`]
+/// branch that needs one static auth parameter (as opposed to
+/// [`Authentication`] itself, which comes from `creds` instead).
+fn required_auth_param<'auth>(
+    defined_auth: &'auth core_entities::entity::swagger_service::ServiceAuth,
+    key: &str,
+) -> error::Result<&'auth str> {
+    Ok(defined_auth
+        .params
+        .get(key)
+        .ok_or_else(|| error::APICaller::InvalidAuthParameter(key.into()))?
+        .as_str())
 }
 
 /// The in-progress state of a single HTTP request being built up from an
@@ -390,34 +355,18 @@ impl APICallState {
     /// unset/default variant, since there's no sensible method to fall
     /// back to.
     fn set_method(&mut self, operation: &Operation) -> error::Result<()> {
-        match operation.method.enum_value_or_default() {
-            core_entities::service::operation::HttpMethodType::POST => {
-                self.method = String::from("POST");
-            }
-            core_entities::service::operation::HttpMethodType::GET => {
-                self.method = String::from("GET");
-            }
-            core_entities::service::operation::HttpMethodType::PUT => {
-                self.method = String::from("PUT");
-            }
-            core_entities::service::operation::HttpMethodType::PATCH => {
-                self.method = String::from("PATCH");
-            }
-            core_entities::service::operation::HttpMethodType::DELETE => {
-                self.method = String::from("DELETE");
-            }
-            core_entities::service::operation::HttpMethodType::HEAD => {
-                self.method = String::from("HEAD");
-            }
-            core_entities::service::operation::HttpMethodType::OPTIONS => {
-                self.method = String::from("OPTIONS");
-            }
-            core_entities::service::operation::HttpMethodType::TRACE => {
-                self.method = String::from("TRACE");
-            }
-            core_entities::service::operation::HttpMethodType::HTTP_METHOD_TYPE_NONE => {
-                return Err(error::APICaller::InvalidMethod("NONE".into()));
-            }
+        use core_entities::entity::operation::HttpMethodType;
+
+        self.method = match operation.method {
+            HttpMethodType::Post => String::from("POST"),
+            HttpMethodType::Get => String::from("GET"),
+            HttpMethodType::Put => String::from("PUT"),
+            HttpMethodType::Patch => String::from("PATCH"),
+            HttpMethodType::Delete => String::from("DELETE"),
+            HttpMethodType::Head => String::from("HEAD"),
+            HttpMethodType::Options => String::from("OPTIONS"),
+            HttpMethodType::Trace => String::from("TRACE"),
+            HttpMethodType::None => return Err(error::APICaller::InvalidMethod("NONE".into())),
         };
 
         Ok(())
@@ -456,22 +405,22 @@ impl APICallState {
             }
 
             if let Some(value) = value {
-                match defined_param.in_.enum_value_or_default() {
-                    core_entities::service::parameter::InType::QUERY => {
+                use core_entities::entity::parameter::InType;
+
+                match defined_param.r#in {
+                    InType::Query => {
                         self.query_params
                             .insert(defined_param.name.clone(), value.clone());
                     }
-                    core_entities::service::parameter::InType::HEADER => {
+                    InType::Header => {
                         self.header_params
                             .insert(defined_param.name.clone(), value.clone());
                     }
-                    core_entities::service::parameter::InType::PATH => {
+                    InType::Path => {
                         self.path_params
                             .insert(defined_param.name.clone(), value.clone());
                     }
-                    core_entities::service::parameter::InType::IN_TYPE_NONE
-                    | core_entities::service::parameter::InType::COOKIE
-                    | core_entities::service::parameter::InType::HEADERS => {
+                    InType::None | InType::Cookie | InType::Headers => {
                         return Err(error::APICaller::Unimplemented(
                             "Http Method Unimplemented".into(),
                         ));
@@ -497,55 +446,48 @@ impl APICallState {
         manifest: &SwaggerService,
         creds: Option<&Authentication>,
     ) -> error::Result<()> {
-        let defined_auth = &manifest.auth;
-        let auth_type = defined_auth.type_.enum_value().map_err(|raw| {
-            error::APICaller::Unimplemented(format!("Unrecognized auth type: {raw}"))
-        })?;
-        match auth_type {
-            core_entities::service::swagger_service::service_auth::Type::HEADER => {
-                let key = defined_auth
-                    .params
-                    .get("header")
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("header".into()))?
-                    .string();
+        use core_entities::entity::swagger_service::service_auth::Type;
 
+        let Some(defined_auth) = &manifest.auth else {
+            return Ok(());
+        };
+
+        match defined_auth.r#type {
+            Type::Header => {
+                let key = required_auth_param(defined_auth, "header")?;
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
-                    .header()
+                    .as_header()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("header credentials".into()))?
                     .value;
                 self.header_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
             }
-            core_entities::service::swagger_service::service_auth::Type::PARAMETER => {
-                let key = defined_auth
-                    .params
-                    .get("name")
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("name".into()))?
-                    .string();
-
+            Type::Parameter => {
+                let key = required_auth_param(defined_auth, "name")?;
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
-                    .query()
+                    .as_query()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("query credentials".into()))?
                     .value;
                 self.query_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
             }
-            core_entities::service::swagger_service::service_auth::Type::PATH => {
-                let key = defined_auth
-                    .params
-                    .get("path")
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("path".into()))?
-                    .string();
-
+            Type::Path => {
+                let key = required_auth_param(defined_auth, "path")?;
                 let value = &creds
                     .ok_or(error::APICaller::MissingCredentials)?
-                    .path()
+                    .as_path()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("path credentials".into()))?
                     .value;
                 self.path_params
                     .insert(key.into(), serde_json::Value::String(value.clone()));
             }
-            core_entities::service::swagger_service::service_auth::Type::BASIC => {
-                let value = creds.ok_or(error::APICaller::MissingCredentials)?.basic();
+            Type::Basic => {
+                let value = creds
+                    .ok_or(error::APICaller::MissingCredentials)?
+                    .as_basic()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("basic credentials".into()))?;
                 let encoded_creds = base64::engine::general_purpose::STANDARD
                     .encode(format!("{}:{}", value.username, value.password));
 
@@ -554,21 +496,16 @@ impl APICallState {
                     serde_json::Value::String(format!("Basic {encoded_creds}")),
                 );
             }
-            core_entities::service::swagger_service::service_auth::Type::OAUTH => {
-                let header_name = defined_auth
-                    .params
-                    .get("header")
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("header".into()))?
-                    .string();
-                let token_type = defined_auth
-                    .params
-                    .get("type")
-                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("type".into()))?
-                    .string();
+            Type::Oauth => {
+                let header_name = required_auth_param(defined_auth, "header")?;
+                let token_type = required_auth_param(defined_auth, "type")?;
 
-                let value = creds.ok_or(error::APICaller::MissingCredentials)?.oauth();
+                let value = creds
+                    .ok_or(error::APICaller::MissingCredentials)?
+                    .as_oauth()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("oauth credentials".into()))?;
                 let access_token = value
-                    .accessToken
+                    .access_token
                     .as_ref()
                     .ok_or(error::APICaller::MissingAccessToken)?;
 
@@ -577,16 +514,20 @@ impl APICallState {
                     serde_json::Value::String(format!("{token_type} {access_token}")),
                 );
             }
-            core_entities::service::swagger_service::service_auth::Type::MULTIHEADER => {
+            Type::MultiHeader => {
                 let headers = defined_auth
                     .params
                     .get("headers")
                     .ok_or_else(|| error::APICaller::InvalidAuthParameter("headers".into()))?
-                    .multiHeaderAuth();
+                    .as_multi_header_auth()
+                    .ok_or_else(|| error::APICaller::InvalidAuthParameter("headers".into()))?;
 
                 let values = creds
                     .ok_or(error::APICaller::MissingCredentials)?
-                    .multiHeader();
+                    .as_multi_header()
+                    .ok_or_else(|| {
+                        error::APICaller::InvalidAuthParameter("multi-header credentials".into())
+                    })?;
                 let values = &values.values;
 
                 for key in &headers.strings {
@@ -598,7 +539,7 @@ impl APICallState {
                         .insert(key.into(), serde_json::Value::String(value.clone()));
                 }
             }
-            core_entities::service::swagger_service::service_auth::Type::UNSET => {}
+            Type::Unset => {}
         }
 
         Ok(())
@@ -610,48 +551,48 @@ impl APICallState {
     /// page size that was requested (`0` if unpaginated).
     fn handle_pagination(
         &mut self,
-        pagination_config: &Option<pagination::Value>,
+        pagination_config: Option<&Pagination>,
         previous_response: Option<&serde_json::Value>,
         current_page: i32,
         parameters: &[Parameter],
     ) -> error::Result<i32> {
         let requested = if let Some(pagination) = pagination_config {
             match pagination {
-                core_entities::service::pagination::Value::PageOffset(page_offset) => {
+                Pagination::PageOffset(page_offset) => {
                     let current_page = page_offset
-                        .startPage
-                        .value
+                        .start_page
+                        .unwrap_or(0)
                         .checked_add(current_page)
                         .ok_or(error::APICaller::PagingOverflow)?;
-                    let max_limit = page_offset.maxLimit.value;
+                    let max_limit = page_offset.max_limit.unwrap_or(0);
 
                     self.apply_runtime_expression(
-                        &page_offset.pageOffsetParam,
+                        &page_offset.page_offset_param,
                         serde_json::Value::Number(current_page.into()),
                         parameters,
                     )?;
                     self.apply_runtime_expression(
-                        &page_offset.limitParam,
+                        &page_offset.limit_param,
                         serde_json::Value::Number(max_limit.into()),
                         parameters,
                     )?;
 
                     max_limit
                 }
-                core_entities::service::pagination::Value::MultiCursor(cursor) => {
-                    let max_limit = cursor.maxLimit.value;
+                Pagination::MultiCursor(cursor) => {
+                    let max_limit = cursor.max_limit.unwrap_or(0);
                     self.apply_runtime_expression(
-                        &cursor.limitParam,
+                        &cursor.limit_param,
                         serde_json::Value::Number(max_limit.into()),
                         parameters,
                     )?;
 
                     if let Some(previous_response) = previous_response {
                         let cursor_path = cursor
-                            .cursorsPath
+                            .cursors_path
                             .first()
                             .ok_or_else(|| error::APICaller::NotFound("Cursor Path".into()))?
-                            .jmesPath();
+                            .jmes_path();
 
                         let cursor_path = cursor_path
                             .strip_prefix(constants::RESPONSE_BODY_PREFIX)
@@ -661,7 +602,7 @@ impl APICallState {
                         let next_cursor = cursor_path.resolve(previous_response)?;
 
                         let cursor_param = cursor
-                            .cursorsParam
+                            .cursors_param
                             .first()
                             .ok_or_else(|| error::APICaller::NotFound("Cursor Param".into()))?;
                         self.apply_runtime_expression(
@@ -673,23 +614,23 @@ impl APICallState {
 
                     max_limit
                 }
-                core_entities::service::pagination::Value::Offset(offset) => {
-                    let max_limit = offset.maxLimit.value;
+                Pagination::Offset(offset) => {
+                    let max_limit = offset.max_limit.unwrap_or(0);
 
                     self.apply_runtime_expression(
-                        &offset.offsetParam,
+                        &offset.offset_param,
                         serde_json::Value::Number(current_page.into()),
                         parameters,
                     )?;
                     self.apply_runtime_expression(
-                        &offset.limitParam,
+                        &offset.limit_param,
                         serde_json::Value::Number(max_limit.into()),
                         parameters,
                     )?;
 
                     max_limit
                 }
-                pagination::Value::NextUrl(_) | pagination::Value::Unpaginated(_) | _ => 0_i32,
+                Pagination::NextUrl(_) | Pagination::Unpaginated(_) => 0_i32,
             }
         } else {
             0_i32
@@ -817,10 +758,10 @@ impl APICaller {
             call_state.collect_params(params, &operation.parameter, true)?;
             call_state.handle_auth(bundle.manifest, bundle.creds)?;
             call_state.set_method(operation)?;
-            call_state.set_endpoint(bundle.api.basePath(), &operation.path);
+            call_state.set_endpoint(bundle.api.base_path.as_deref().unwrap_or(""), &operation.path);
 
             let request_size = call_state.handle_pagination(
-                &operation.pagination.value,
+                operation.pagination.as_ref(),
                 page_responses.last(),
                 current_page,
                 &operation.parameter,
@@ -840,7 +781,7 @@ impl APICaller {
             }
 
             // Peek at what the results path is
-            let actual_result = find_results(&result, &operation.pagination.value)?;
+            let actual_result = find_results(&result, operation.pagination.as_ref())?;
 
             // Determine how many items we got in a request
             let current_size = if let serde_json::Value::Array(arr) = actual_result {
@@ -872,7 +813,7 @@ impl APICaller {
         let result: error::Result<Vec<serde_json::Value>> = page_responses
             .into_iter()
             .map(|response| {
-                let result = find_results(&response, &operation.pagination.value)?.clone();
+                let result = find_results(&response, operation.pagination.as_ref())?.clone();
                 Ok(result)
             })
             .collect();
@@ -974,10 +915,10 @@ impl AsyncAPICaller {
             call_state.collect_params(params, &operation.parameter, true)?;
             call_state.handle_auth(bundle.manifest, bundle.creds)?;
             call_state.set_method(operation)?;
-            call_state.set_endpoint(bundle.api.basePath(), &operation.path);
+            call_state.set_endpoint(bundle.api.base_path.as_deref().unwrap_or(""), &operation.path);
 
             let request_size = call_state.handle_pagination(
-                &operation.pagination.value,
+                operation.pagination.as_ref(),
                 page_responses.last(),
                 current_page,
                 &operation.parameter,
@@ -999,7 +940,7 @@ impl AsyncAPICaller {
             }
 
             // Peek at what the results path is
-            let actual_result = find_results(&result, &operation.pagination.value)?;
+            let actual_result = find_results(&result, operation.pagination.as_ref())?;
 
             // Determine how many items we got in a request
             let current_size = if let serde_json::Value::Array(arr) = actual_result {
@@ -1031,7 +972,7 @@ impl AsyncAPICaller {
         let result: error::Result<Vec<serde_json::Value>> = page_responses
             .into_iter()
             .map(|response| {
-                let result = find_results(&response, &operation.pagination.value)?.clone();
+                let result = find_results(&response, operation.pagination.as_ref())?.clone();
                 Ok(result)
             })
             .collect();
@@ -1089,8 +1030,10 @@ mod tests {
         thread,
     };
 
-    use core_entities::service::{swagger_service::ServiceAuth, Operation, SwaggerService};
-    use protobuf::{EnumOrUnknown, MessageField};
+    use core_entities::entity::{
+        operation::HttpMethodType, parameter::InType, swagger_service::service_auth::Type,
+        swagger_service::ServiceAuth, Operation, SwaggerService,
+    };
 
     use super::*;
 
@@ -1208,13 +1151,16 @@ mod tests {
         let (log, _log_handle) = LogWriter::spawn(tempfile::tempfile().unwrap());
         let caller = AsyncAPICaller::new(log);
 
-        let mut operation = Operation::new();
-        operation.path = "/ping".to_owned();
-        operation.method =
-            EnumOrUnknown::new(core_entities::service::operation::HttpMethodType::GET);
+        let operation = Operation {
+            path: "/ping".to_owned(),
+            method: HttpMethodType::Get,
+            ..Default::default()
+        };
 
-        let mut api = core_entities::service::CommonApi::new();
-        api.set_basePath(base_url);
+        let mut api = core_entities::entity::CommonApi {
+            base_path: Some(base_url),
+            ..Default::default()
+        };
         api.operations.insert("execute".to_owned(), operation);
 
         let manifest = SwaggerService::default();
@@ -1237,9 +1183,9 @@ mod tests {
     }
 
     #[test]
-    fn set_method_does_not_panic_on_an_unrecognized_method() {
+    fn set_method_does_not_panic_on_an_unset_method() {
         let operation = Operation {
-            method: EnumOrUnknown::from_i32(999),
+            method: HttpMethodType::None,
             ..Default::default()
         };
 
@@ -1253,10 +1199,10 @@ mod tests {
     }
 
     #[test]
-    fn collect_params_does_not_panic_on_an_unrecognized_parameter_location() {
+    fn collect_params_does_not_panic_on_an_unset_parameter_location() {
         let defined_param = Parameter {
             name: "x".to_owned(),
-            in_: EnumOrUnknown::from_i32(999),
+            r#in: InType::None,
             ..Default::default()
         };
         let params = serde_json::json!({ "x": "value" });
@@ -1271,10 +1217,10 @@ mod tests {
     }
 
     #[test]
-    fn handle_auth_does_not_panic_on_an_unrecognized_auth_type() {
+    fn handle_auth_does_not_panic_on_a_missing_auth_parameter() {
         let manifest = SwaggerService {
-            auth: MessageField::some(ServiceAuth {
-                type_: EnumOrUnknown::from_i32(999),
+            auth: Some(ServiceAuth {
+                r#type: Type::Header,
                 ..Default::default()
             }),
             ..Default::default()
@@ -1284,8 +1230,9 @@ mod tests {
         let result = call_state.handle_auth(&manifest, None);
 
         assert!(
-            result.is_err(),
-            "expected an unrecognized auth type to error instead of silently skipping auth, got {result:?}"
+            matches!(result, Err(error::APICaller::InvalidAuthParameter(_))),
+            "expected a Header auth type with no configured \"header\" param to error instead \
+             of silently skipping auth, got {result:?}"
         );
     }
 

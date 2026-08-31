@@ -334,6 +334,28 @@ pub mod swagger_service {
             MultiHeaderAuth(MultiHeaderAuth),
         }
 
+        impl AuthParam {
+            /// Returns the string value, or `""` if this param is a
+            /// [`AuthParam::MultiHeaderAuth`] instead.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                match self {
+                    Self::Str(s) => s,
+                    Self::MultiHeaderAuth(_) => "",
+                }
+            }
+
+            /// Returns the multi-header values, if that's this param's
+            /// shape.
+            #[must_use]
+            pub fn as_multi_header_auth(&self) -> Option<&MultiHeaderAuth> {
+                match self {
+                    Self::MultiHeaderAuth(v) => Some(v),
+                    Self::Str(_) => None,
+                }
+            }
+        }
+
         /// Multiple static header values, for `type: MULTIHEADER`.
         #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
         pub struct MultiHeaderAuth {
