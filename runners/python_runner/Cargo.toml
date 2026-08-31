@@ -11,6 +11,7 @@ chrono = { workspace = true }
 lazy_static = { workspace = true }
 
 core_entities = { path = "../../entities/core" }
+core_json_compat = { path = "../../common/core_json_compat" }
 credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
 

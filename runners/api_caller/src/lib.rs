@@ -13,6 +13,7 @@ use core_entities::ports::engine::{
     self, AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle, EngineInputContext,
 };
 use core_entities::service::{Operation, Pagination, Parameter, SwaggerService};
+use core_json_compat::{from_json, to_json};
 use credential_entities::credentials::Authentication;
 use http::{HeaderMap, HeaderName, HeaderValue};
 
@@ -866,12 +867,14 @@ impl DataConnectionRunner for APICaller {
         name: &str,
         operation_name: &str,
         bundle: &DataConnectorBundle,
-        params: serde_json::Value,
-        options: serde_json::Value,
+        params: engine::RuntimeValue,
+        options: engine::RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<serde_json::Value> {
+    ) -> engine::error::Result<engine::RuntimeValue> {
+        let params = to_json(params);
+        let options = to_json(options);
         let result = self.run_internal(name, operation_name, bundle, &params, &options, ctx)?;
-        Ok(result)
+        Ok(from_json(result))
     }
 }
 
@@ -1029,14 +1032,16 @@ impl AsyncDataConnectionRunner for AsyncAPICaller {
         name: &str,
         operation_name: &str,
         bundle: &DataConnectorBundle,
-        params: serde_json::Value,
-        options: serde_json::Value,
+        params: engine::RuntimeValue,
+        options: engine::RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<serde_json::Value> {
+    ) -> engine::error::Result<engine::RuntimeValue> {
+        let params = to_json(params);
+        let options = to_json(options);
         let result = self
             .run_internal(name, operation_name, bundle, &params, &options, ctx)
             .await?;
-        Ok(result)
+        Ok(from_json(result))
     }
 }
 
@@ -1194,14 +1199,14 @@ mod tests {
                 "svc",
                 "execute",
                 &bundle,
-                serde_json::Value::Null,
-                serde_json::Value::Null,
+                from_json(serde_json::Value::Null),
+                from_json(serde_json::Value::Null),
                 &ctx,
             )
             .await
             .expect("async api call should succeed");
 
-        assert_eq!(result, serde_json::json!([{}]));
+        assert_eq!(to_json(result), serde_json::json!([{}]));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{EngineInputContext, EngineService};
+use core_json_compat::{from_json, to_json};
 
 use super::{constants, converters};
 use pyo3::exceptions::{PyArithmeticError, PyTypeError, PyValueError};
@@ -114,10 +115,10 @@ impl Task {
 
         let result = self
             .engine
-            .run(&self.id, params, options, &self.ctx)
+            .run(&self.id, from_json(params), from_json(options), &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 
-        converters::from_value(py, result)
+        converters::from_value(py, to_json(result))
     }
 
     /// Runs the built-in `$input` operation with `blocks` to collect user
@@ -137,13 +138,18 @@ impl Task {
 
         let result = self
             .engine
-            .run("$input", blocks, Value::Null, &self.ctx)
+            .run(
+                "$input",
+                from_json(blocks),
+                from_json(Value::Null),
+                &self.ctx,
+            )
             .map_err(|e| PyValueError::new_err(format!("Error Collecting Input: {e}")))?;
 
         let mut params = converters::from_py(self.params.as_ref(py))?;
 
         if let Value::Object(map) = &mut params {
-            map.insert("input_results".into(), result);
+            map.insert("input_results".into(), to_json(result));
         } else {
             // TODO: Verify this functionality
             return Err(PyValueError::new_err("Expected parameters to be an Object"));
@@ -153,10 +159,10 @@ impl Task {
 
         let result = self
             .engine
-            .run(&self.id, params, options, &self.ctx)
+            .run(&self.id, from_json(params), from_json(options), &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 
-        converters::from_value(py, result)
+        converters::from_value(py, to_json(result))
     }
 }
 
@@ -203,10 +209,10 @@ impl APIBindingWraper {
 
         let result = self
             .engine
-            .run(id, params, options, &self.ctx)
+            .run(id, from_json(params), from_json(options), &self.ctx)
             .map_err(|e| PyValueError::new_err(format!("Error Making API Call: {e}")))?;
 
-        converters::from_value(py, result)
+        converters::from_value(py, to_json(result))
     }
 }
 

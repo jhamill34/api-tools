@@ -15,6 +15,7 @@ anyhow = { workspace = true }
 
 workflow_engine = { path = "../../prototypes/workflow_engine" }
 core_entities = { path = "../../entities/core" }
+core_json_compat = { path = "../../common/core_json_compat" }
 common_data_structures = { path = "../../common/data_structures" }
 
 [dev-dependencies]

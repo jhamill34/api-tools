@@ -8,8 +8,7 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
-
+pub use super::value::RuntimeValue;
 use crate::service::{
     APIWrappedService, CommonApi, ScriptedAction, SwaggerService, VersionedServiceTree,
     WorkflowService,
@@ -149,10 +148,10 @@ pub trait DataConnectionRunner {
         name: &str,
         operation_name: &str,
         bundle: &DataConnectorBundle,
-        params: Value,
-        options: Value,
+        params: RuntimeValue,
+        options: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// An output port that executes an OpenAPI-backed (`Swagger`) operation
@@ -173,10 +172,10 @@ pub trait AsyncDataConnectionRunner: Send + Sync {
         name: &str,
         operation_name: &str,
         bundle: &DataConnectorBundle,
-        params: Value,
-        options: Value,
+        params: RuntimeValue,
+        options: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// An output port that executes a `SimpleCode`/`Action` operation's source
@@ -190,9 +189,9 @@ pub trait CodeRunner {
         name: &str,
         operation_name: &str,
         source_code: &str,
-        params: Value,
+        params: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// An output port that executes an `ApiWrapped` operation: invokes another
@@ -207,9 +206,9 @@ pub trait FilteredRunner {
         name: &str,
         operation_name: &str,
         manifest: &APIWrappedService,
-        params: Value,
+        params: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// An output port that executes a `Workflow` operation's Lua source in an
@@ -241,9 +240,9 @@ pub trait WorkflowRunner: Send + Sync {
         name: &str,
         operation_name: &str,
         manifest: &WorkflowService,
-        params: Value,
+        params: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// An output port that executes a `ScriptedAction` operation. Registered
@@ -256,9 +255,9 @@ pub trait ScriptRunner {
         name: &str,
         operation_name: &str,
         manifest: &ScriptedAction,
-        params: Value,
+        params: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 }
 
 /// A primary/driving port: the behavioral surface a driving adapter (e.g.
@@ -276,10 +275,10 @@ pub trait EngineService: Send + Sync {
     fn run(
         &self,
         identifier: &str,
-        params: Value,
-        options: Value,
+        params: RuntimeValue,
+        options: RuntimeValue,
         context: &EngineInputContext,
-    ) -> error::Result<Value>;
+    ) -> error::Result<RuntimeValue>;
 
     /// See `Engine::is_workflow_operation`.
     fn is_workflow_operation(&self, identifier: &str, context: &EngineInputContext) -> bool;

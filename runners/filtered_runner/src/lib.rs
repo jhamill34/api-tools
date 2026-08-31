@@ -10,6 +10,7 @@ use common_data_structures::log_writer::LogWriter;
 use lazy_static::lazy_static;
 
 use core_entities::ports::engine::{self, EngineInputContext, EngineService, FilteredRunner};
+use core_json_compat::{from_json, to_json};
 use regex::Regex;
 
 lazy_static! {
@@ -70,11 +71,14 @@ impl APIWrapper {
         let context =
             EngineInputContext::new(Some(name.to_owned()), ctx.execution_id.clone(), true);
 
-        let result = self
-            .engine
-            .run(&id, input, serde_json::Value::Null, &context)?;
+        let result = self.engine.run(
+            &id,
+            from_json(input),
+            from_json(serde_json::Value::Null),
+            &context,
+        )?;
 
-        let result = Rc::new(result);
+        let result = Rc::new(to_json(result));
 
         let mut output = serde_json::Map::new();
 
@@ -97,12 +101,13 @@ impl FilteredRunner for APIWrapper {
         name: &str,
         operation_name: &str,
         manifest: &core_entities::service::APIWrappedService,
-        params: serde_json::Value,
+        params: engine::RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<serde_json::Value> {
+    ) -> engine::error::Result<engine::RuntimeValue> {
+        let params = to_json(params);
         let result = self.run_internal(name, operation_name, manifest, &params, ctx)?;
 
-        Ok(result)
+        Ok(from_json(result))
     }
 }
 

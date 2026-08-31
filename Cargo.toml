@@ -30,6 +30,7 @@ members = [
 	"storage/local_file_loader",
 
 	"common/data_structures",
+	"common/core_json_compat",
 
 	"auth/oauth_flow",
 
