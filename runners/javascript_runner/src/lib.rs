@@ -12,6 +12,7 @@ use std::{cell::RefCell, sync::Arc};
 
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
+use core_json_compat::{from_json, to_json};
 
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
@@ -149,10 +150,10 @@ impl JsActionRunner {
 
             let context = EngineInputContext::new(Some(name.clone()), execution_id.clone(), false);
             let result = engine
-                .run(&id, params, options, &context)
+                .run(&id, from_json(params), from_json(options), &context)
                 .map_err(|err| mini_v8::Error::ExternalError(Box::new(err)))?;
 
-            let output = converters::from_value(&inv.mv8, result)?;
+            let output = converters::from_value(&inv.mv8, to_json(result))?;
 
             Ok(output)
         });
@@ -187,11 +188,11 @@ impl CodeRunner for JsActionRunner {
         name: &str,
         operation_name: &str,
         source_code: &str,
-        params: serde_json::Value,
+        params: engine::RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<serde_json::Value> {
-        let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
-        Ok(result)
+    ) -> engine::error::Result<engine::RuntimeValue> {
+        let result = self.run_internal(name, operation_name, source_code, to_json(params), ctx)?;
+        Ok(from_json(result))
     }
 }
 

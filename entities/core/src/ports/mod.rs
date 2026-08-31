@@ -10,4 +10,5 @@
 
 pub mod engine;
 pub mod loader;
+pub mod value;
 pub mod writer;

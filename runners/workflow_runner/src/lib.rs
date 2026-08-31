@@ -53,9 +53,10 @@ use std::{sync::Arc, time::Duration};
 
 use core_entities::ports::engine::{
     self, error::ExecutionEngine, DataConnectorBundle, EngineInputContext, EngineService,
-    WorkflowRunner,
+    RuntimeValue, WorkflowRunner,
 };
 use core_entities::service::WorkflowService as WorkflowManifest;
+use core_json_compat::{from_json, to_json};
 use mlua::LuaSerdeExt;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -229,13 +230,14 @@ fn install_api_run_binding(
             let context =
                 EngineInputContext::new(Some(service_name.clone()), execution_id.clone(), false);
 
-            let result =
-                tokio::task::spawn_blocking(move || engine.run(&id, params, options, &context))
-                    .await
-                    .map_err(|join_err| mlua::Error::ExternalError(Arc::new(join_err)))?
-                    .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
+            let result = tokio::task::spawn_blocking(move || {
+                engine.run(&id, from_json(params), from_json(options), &context)
+            })
+            .await
+            .map_err(|join_err| mlua::Error::ExternalError(Arc::new(join_err)))?
+            .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
 
-            lua.to_value(&result)
+            lua.to_value(&to_json(result))
         }
     })
 }
@@ -284,14 +286,14 @@ fn install_api_call_binding(
                     &resolved_service,
                     &operation_name,
                     &bundle,
-                    params,
-                    options,
+                    from_json(params),
+                    from_json(options),
                     &context,
                 )
                 .await
                 .map_err(|err| mlua::Error::ExternalError(Arc::new(err)))?;
 
-            lua.to_value(&result)
+            lua.to_value(&to_json(result))
         }
     })
 }
@@ -303,9 +305,9 @@ impl WorkflowRunner for WorkflowAdapter {
         name: &str,
         _operation_name: &str,
         manifest: &WorkflowManifest,
-        params: Value,
+        params: RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<Value> {
+    ) -> engine::error::Result<RuntimeValue> {
         if matches!(
             &manifest.source,
             Some(core_entities::service::workflow_service::Source::ResourcePath(_))
@@ -321,16 +323,20 @@ impl WorkflowRunner for WorkflowAdapter {
                 service_name: name.to_owned(),
                 execution_id: ctx.execution_id.clone(),
                 manifest: manifest.clone(),
-                params,
+                params: to_json(params),
                 responder: tx,
             })
             .map_err(|_send_err| ExecutionEngine::Other {
                 source: anyhow::anyhow!("the workflow-dispatch thread is not running"),
             })?;
 
-        rx.await.map_err(|_recv_err| ExecutionEngine::Other {
-            source: anyhow::anyhow!("the workflow-dispatch thread dropped the response channel"),
-        })?
+        rx.await
+            .map_err(|_recv_err| ExecutionEngine::Other {
+                source: anyhow::anyhow!(
+                    "the workflow-dispatch thread dropped the response channel"
+                ),
+            })?
+            .map(from_json)
     }
 }
 
@@ -395,13 +401,13 @@ mod tests {
                 "svc",
                 "execute",
                 &manifest,
-                serde_json::json!({ "x": 41 }),
+                from_json(serde_json::json!({ "x": 41 })),
                 &ctx,
             )
             .await
             .expect("workflow run should succeed");
 
-        assert_eq!(result, serde_json::json!(42));
+        assert_eq!(to_json(result), serde_json::json!(42));
     }
 
     #[tokio::test]
@@ -421,7 +427,13 @@ mod tests {
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                from_json(serde_json::Value::Null),
+                &ctx,
+            )
             .await;
 
         assert!(
@@ -440,9 +452,9 @@ mod tests {
             name: &str,
             operation_name: &str,
             _source_code: &str,
-            params: serde_json::Value,
+            params: RuntimeValue,
             _ctx: &EngineInputContext,
-        ) -> engine::error::Result<serde_json::Value> {
+        ) -> engine::error::Result<RuntimeValue> {
             self.calls
                 .lock()
                 .unwrap()
@@ -542,10 +554,10 @@ mod tests {
             name: &str,
             operation_name: &str,
             _bundle: &DataConnectorBundle,
-            params: serde_json::Value,
-            _options: serde_json::Value,
+            params: RuntimeValue,
+            _options: RuntimeValue,
             _ctx: &EngineInputContext,
-        ) -> engine::error::Result<serde_json::Value> {
+        ) -> engine::error::Result<RuntimeValue> {
             self.calls
                 .lock()
                 .unwrap()
@@ -574,11 +586,17 @@ mod tests {
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                from_json(serde_json::Value::Null),
+                &ctx,
+            )
             .await
             .expect("workflow run should succeed");
 
-        assert_eq!(result, serde_json::json!({ "hello": "world" }));
+        assert_eq!(to_json(result), serde_json::json!({ "hello": "world" }));
         assert_eq!(
             calls.lock().unwrap().as_slice(),
             [("other".to_owned(), "op".to_owned())],
@@ -609,11 +627,17 @@ mod tests {
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                from_json(serde_json::Value::Null),
+                &ctx,
+            )
             .await
             .expect("workflow run should succeed - the error is caught by pcall");
 
-        assert_eq!(result, serde_json::json!({ "ok": false }));
+        assert_eq!(to_json(result), serde_json::json!({ "ok": false }));
         assert!(
             calls.lock().unwrap().is_empty(),
             "the fake connector should never have been called for a non-Swagger manifest"
@@ -643,12 +667,18 @@ mod tests {
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
-            .run("svc", "execute", &manifest, serde_json::Value::Null, &ctx)
+            .run(
+                "svc",
+                "execute",
+                &manifest,
+                from_json(serde_json::Value::Null),
+                &ctx,
+            )
             .await
             .expect("workflow run should succeed");
 
         assert_eq!(
-            result,
+            to_json(result),
             serde_json::json!([{ "hello": "world" }]),
             "expected Engine::run's usual single-element array wrapping to apply here too, \
              proving api.run really went through Engine::run rather than a shortcut"

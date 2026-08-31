@@ -16,11 +16,13 @@ chrono = { workspace = true }
 urlencoding = "2.1"
 
 core_entities = { path = "../../entities/core" }
+core_json_compat = { path = "../../common/core_json_compat" }
 credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
 
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+
 
 [dev-dependencies]
 tempfile = "3"

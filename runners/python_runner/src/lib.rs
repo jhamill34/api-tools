@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
+use core_json_compat::{from_json, to_json};
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyString};
@@ -161,11 +162,11 @@ impl CodeRunner for PyActionRunner {
         name: &str,
         operation_name: &str,
         source_code: &str,
-        params: Value,
+        params: engine::RuntimeValue,
         ctx: &EngineInputContext,
-    ) -> engine::error::Result<Value> {
-        let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
-        Ok(result)
+    ) -> engine::error::Result<engine::RuntimeValue> {
+        let result = self.run_internal(name, operation_name, source_code, to_json(params), ctx)?;
+        Ok(from_json(result))
     }
 }
 

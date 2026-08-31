@@ -21,6 +21,7 @@ use std::{
 use anyhow::{anyhow, Context};
 use core_entities::ports::engine::{self, EngineInputContext, EngineLookup, EngineService};
 use core_entities::service::{service_manifest_latest, VersionedServiceTree};
+use core_json_compat::{from_json, to_json};
 use credential_entities::credentials::Authentication;
 use dotenv::dotenv;
 use engine_entities::engine::{
@@ -236,6 +237,9 @@ impl Engine for ApiDaemon {
             map.into()
         });
 
+        let input = from_json(input);
+        let options = from_json(options);
+
         let engine = Arc::clone(&self.engine);
         let responses = Arc::clone(&self.responses);
         let operation_id = req.id;
@@ -269,7 +273,10 @@ impl Engine for ApiDaemon {
                         .run(&service_name, &operation_name, &workflow, input, &ctx)
                         .await?;
 
-                    Ok(execution_engine::wrap_result(result, ctx.raw_response))
+                    Ok(execution_engine::wrap_result(
+                        to_json(result),
+                        ctx.raw_response,
+                    ))
                 })
                 .await;
             });
@@ -278,7 +285,7 @@ impl Engine for ApiDaemon {
                 let ctx = EngineInputContext::new(None, execution_id.to_string(), false);
 
                 finish_run(&execution_id.to_string(), &responses, move || {
-                    engine.run(&operation_id, input, options, &ctx)
+                    engine.run(&operation_id, input, options, &ctx).map(to_json)
                 });
             });
         }

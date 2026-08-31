@@ -20,6 +20,7 @@ tracing-subscriber = { workspace = true }
 
 engine_entities = { path = "../../entities/engine" }
 core_entities = { path = "../../entities/core" }
+core_json_compat = { path = "../../common/core_json_compat" }
 credential_entities = { path = "../../entities/credentials" }
 
 service_loader = { path = "../../usecases/service_loader" }

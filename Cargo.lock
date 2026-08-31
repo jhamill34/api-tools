@@ -107,6 +107,7 @@ dependencies = [
  "chrono",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "http",
  "jsonptr",
@@ -152,6 +153,7 @@ dependencies = [
  "async-trait",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "dhat",
  "dotenv",
@@ -492,8 +494,15 @@ dependencies = [
  "async-trait",
  "credential_entities",
  "serde",
- "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "core_json_compat"
+version = "0.1.0"
+dependencies = [
+ "core_entities",
+ "serde_json",
 ]
 
 [[package]]
@@ -699,6 +708,7 @@ dependencies = [
  "chrono",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "serde_json",
  "tempfile",
@@ -744,6 +754,7 @@ version = "0.1.0"
 dependencies = [
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "jmespath",
  "lazy_static",
@@ -1263,6 +1274,7 @@ dependencies = [
  "chrono",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "lazy_static",
  "mini-v8",
@@ -2057,6 +2069,7 @@ dependencies = [
  "chrono",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "lazy_static",
  "pyo3",
@@ -3775,6 +3788,7 @@ dependencies = [
  "chrono",
  "common_data_structures",
  "core_entities",
+ "core_json_compat",
  "credential_entities",
  "execution_engine",
  "mlua",

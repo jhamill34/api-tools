@@ -9,8 +9,10 @@ mod constants;
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{
     error, AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
-    EngineInputContext, EngineLookup, EngineService, FilteredRunner, ScriptRunner, WorkflowRunner,
+    EngineInputContext, EngineLookup, EngineService, FilteredRunner, RuntimeValue, ScriptRunner,
+    WorkflowRunner,
 };
+use core_json_compat::{from_json, to_json};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
@@ -253,14 +255,16 @@ impl Engine {
             let creds = credentials.as_ref();
 
             let bundle = DataConnectorBundle::new(swagger, api, creds);
-            connector.run(
-                service_name,
-                operation_name,
-                &bundle,
-                params,
-                options,
-                context,
-            )
+            connector
+                .run(
+                    service_name,
+                    operation_name,
+                    &bundle,
+                    from_json(params),
+                    from_json(options),
+                    context,
+                )
+                .map(to_json)
         } else {
             Err(error::ExecutionEngine::NotFound(
                 "Data connector runner".into(),
@@ -317,12 +321,12 @@ impl Engine {
                     service_name,
                     operation_name,
                     &source.content,
-                    params,
+                    from_json(params),
                     context,
                 )?;
                 self.log(identifier, "ACTION", "COMPLETED")?;
 
-                Ok(result)
+                Ok(to_json(result))
             } else {
                 Err(error::ExecutionEngine::NotFound(format!(
                     "Code Runner for language {} not found",
@@ -350,11 +354,16 @@ impl Engine {
     ) -> error::Result<Value> {
         if let Some(filtered_runner) = &self.filtered_runner {
             self.log(identifier, "API_WRAPPED", "STARTED")?;
-            let result =
-                filtered_runner.run(service_name, operation_name, api_wrapped, params, context)?;
+            let result = filtered_runner.run(
+                service_name,
+                operation_name,
+                api_wrapped,
+                from_json(params),
+                context,
+            )?;
             self.log(identifier, "API_WRAPPED", "COMPLETED")?;
 
-            Ok(result)
+            Ok(to_json(result))
         } else {
             Err(error::ExecutionEngine::NotFound(
                 "API Wrapper runner not found".into(),
@@ -490,11 +499,17 @@ impl Engine {
 
         self.log(identifier, "WORKFLOW", "STARTED")?;
         let result = workflow_runner
-            .run(&service_name, &operation_name, &workflow, params, context)
+            .run(
+                &service_name,
+                &operation_name,
+                &workflow,
+                from_json(params),
+                context,
+            )
             .await?;
         self.log(identifier, "WORKFLOW", "COMPLETED")?;
 
-        Ok(wrap_result(result, context.raw_response))
+        Ok(wrap_result(to_json(result), context.raw_response))
     }
 
     /// Reports whether `identifier` resolves to a `Workflow`-kind manifest.
@@ -620,10 +635,16 @@ impl Engine {
         })?;
 
         self.log(identifier, "SIMPLE_CODE", "STARTED")?;
-        let result = code_runner.run(service_name, operation_name, source_code, params, context)?;
+        let result = code_runner.run(
+            service_name,
+            operation_name,
+            source_code,
+            from_json(params),
+            context,
+        )?;
         self.log(identifier, "SIMPLE_CODE", "COMPLETED")?;
 
-        Ok(result)
+        Ok(to_json(result))
     }
 
     /// Queues a timestamped `(action_type) [status] id` line to the shared
@@ -644,11 +665,12 @@ impl EngineService for Engine {
     fn run(
         &self,
         identifier: &str,
-        params: Value,
-        options: Value,
+        params: RuntimeValue,
+        options: RuntimeValue,
         context: &EngineInputContext,
-    ) -> error::Result<Value> {
-        self.run(identifier, params, options, context)
+    ) -> error::Result<RuntimeValue> {
+        self.run(identifier, to_json(params), to_json(options), context)
+            .map(from_json)
     }
 
     #[inline]
@@ -720,14 +742,15 @@ impl EngineService for WeakEngine {
     fn run(
         &self,
         identifier: &str,
-        params: Value,
-        options: Value,
+        params: RuntimeValue,
+        options: RuntimeValue,
         context: &EngineInputContext,
-    ) -> error::Result<Value> {
+    ) -> error::Result<RuntimeValue> {
         self.0
             .upgrade()
             .expect("Engine outlives every adapter holding a WeakEngine handle to it")
-            .run(identifier, params, options, context)
+            .run(identifier, to_json(params), to_json(options), context)
+            .map(from_json)
     }
 
     #[inline]
@@ -908,15 +931,15 @@ mod tests {
             name: &str,
             operation_name: &str,
             manifest: &WorkflowService,
-            _params: Value,
+            _params: RuntimeValue,
             _ctx: &EngineInputContext,
-        ) -> error::Result<Value> {
+        ) -> error::Result<RuntimeValue> {
             self.calls.lock().unwrap().push((
                 name.to_owned(),
                 operation_name.to_owned(),
                 manifest.code_string().to_owned(),
             ));
-            Ok(Value::String("workflow ran".into()))
+            Ok(RuntimeValue::String("workflow ran".into()))
         }
     }
 
@@ -1135,15 +1158,15 @@ mod tests {
             name: &str,
             operation_name: &str,
             _bundle: &DataConnectorBundle,
-            _params: Value,
-            _options: Value,
+            _params: RuntimeValue,
+            _options: RuntimeValue,
             _ctx: &EngineInputContext,
-        ) -> error::Result<Value> {
+        ) -> error::Result<RuntimeValue> {
             self.calls
                 .lock()
                 .unwrap()
                 .push((name.to_owned(), operation_name.to_owned()));
-            Ok(Value::String("connector called".into()))
+            Ok(RuntimeValue::String("connector called".into()))
         }
     }
 
