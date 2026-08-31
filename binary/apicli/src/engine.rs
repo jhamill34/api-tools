@@ -18,8 +18,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _};
-use core_entities::entity::VersionedServiceTree;
-use credential_entities::entity::Authentication;
+use core_entities::service::VersionedServiceTree;
+use credential_entities::credentials::Authentication;
 use engine_entities::engine::{
     engine_client::EngineClient, GetRunResultRequest, GetSerivceRequest, ListRequest,
     RunServiceRequest, SaveServiceRequest,

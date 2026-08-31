@@ -7,8 +7,8 @@ use std::io;
 
 use thiserror::Error;
 
-use crate::entity::VersionedServiceTree;
-use credential_entities::entity::Authentication;
+use crate::service::VersionedServiceTree;
+use credential_entities::credentials::Authentication;
 
 /// Failure modes of a [`LoaderOutput`] implementation - deliberately a
 /// small, port-contract-shaped enum, not `service_loader`'s own (much

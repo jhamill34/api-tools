@@ -11,8 +11,8 @@ use structs::EnvironmentState;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use core_entities::entity::VersionedServiceTree;
-use credential_entities::entity::Authentication;
+use core_entities::service::VersionedServiceTree;
+use credential_entities::credentials::Authentication;
 use rocket::config::TlsConfig;
 
 pub struct Authenticator {

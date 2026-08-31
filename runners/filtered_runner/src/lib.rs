@@ -17,7 +17,7 @@ lazy_static! {
         Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
 }
 
-/// Resolves an [`APIWrappedService`](core_entities::entity::APIWrappedService)
+/// Resolves an [`APIWrappedService`](core_entities::service::APIWrappedService)
 /// manifest by invoking the wrapped operation on the shared
 /// [`EngineService`] and picking out the manifest's selected
 /// output fields.
@@ -47,7 +47,7 @@ impl APIWrapper {
         &self,
         name: &str,
         _operation_name: &str,
-        manifest: &core_entities::entity::APIWrappedService,
+        manifest: &core_entities::service::APIWrappedService,
         params: &serde_json::Value,
         ctx: &EngineInputContext,
     ) -> error::Result<serde_json::Value> {
@@ -99,7 +99,7 @@ impl FilteredRunner for APIWrapper {
         &self,
         name: &str,
         operation_name: &str,
-        manifest: &core_entities::entity::APIWrappedService,
+        manifest: &core_entities::service::APIWrappedService,
         params: serde_json::Value,
         ctx: &EngineInputContext,
     ) -> engine::error::Result<serde_json::Value> {

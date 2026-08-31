@@ -4,9 +4,9 @@
 
 use std::{collections::HashMap, io};
 
-use core_entities::entity::{self as service, VersionedServiceTree};
+use core_entities::service::{self, VersionedServiceTree};
 pub use core_entities::ports::writer::Storage;
-use credential_entities::entity::Authentication;
+use credential_entities::credentials::Authentication;
 
 pub mod error;
 

@@ -8,11 +8,11 @@ use std::{collections::HashMap, io};
 use crate::Fetcher;
 
 use super::{constants, error};
-use core_entities::entity::{
+use core_entities::service::{
     service_manifest_latest, versioned_service_tree, ServiceManifest, ServiceResource,
     SwaggerOverrides, VersionedServiceTree,
 };
-use credential_entities::entity::Authentication;
+use credential_entities::credentials::Authentication;
 
 /// Loads override configuration from `fetcher`'s
 /// [`CONFIG_LOCATION`](constants::CONFIG_LOCATION) — a flat

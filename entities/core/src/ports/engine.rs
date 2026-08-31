@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::entity::{
+use crate::service::{
     APIWrappedService, CommonApi, ScriptedAction, SwaggerService, VersionedServiceTree,
     WorkflowService,
 };
-use credential_entities::entity::Authentication;
+use credential_entities::credentials::Authentication;
 
 /// Errors produced while resolving and running an operation identifier.
 pub mod error {

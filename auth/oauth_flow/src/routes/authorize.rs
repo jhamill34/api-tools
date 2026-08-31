@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use core_entities::entity::service_manifest_latest;
+use core_entities::service::service_manifest_latest;
 use reqwest::Url;
 use rocket::{response::Redirect, State};
 

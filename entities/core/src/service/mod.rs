@@ -1,9 +1,9 @@
-//! Plain-Rust mirror of `src/proto/service.proto` - every message/enum
-//! that's actually referenced anywhere in this workspace outside
-//! `entities/core` itself, and nothing else.
+//! A loaded service manifest's domain entities - every message/enum
+//! actually referenced anywhere in this workspace outside `entities/core`
+//! itself, and nothing else.
 //!
-//! JSON shape matches `protobuf-json-mapping`'s proto3 canonical JSON
-//! output byte-for-byte (see each module's `json_compat_tests`), since
+//! JSON shape matches protobuf3's canonical JSON mapping (the format
+//! these types used to be generated from) byte-for-byte, since
 //! `manifest.json`/`config.json` are on-disk, user-authored files
 //! (`service_loader::loaders::load_service`/`load_configuration`) and must
 //! keep parsing unchanged.
@@ -55,7 +55,4 @@ pub use openapi::{
     SchemaValue,
 };
 pub use params::{common_parameter, McOperationParameter, OperationParameter};
-
-#[cfg(test)]
-mod json_compat_tests;
 

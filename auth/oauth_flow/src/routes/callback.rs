@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
-use core_entities::entity::{service_manifest_latest, service_manifest_latest::oauth_config};
-use credential_entities::entity::Authentication;
+use core_entities::service::{service_manifest_latest, service_manifest_latest::oauth_config};
+use credential_entities::credentials::Authentication;
 use rocket::{Shutdown, State};
 use std::collections::HashMap;
 

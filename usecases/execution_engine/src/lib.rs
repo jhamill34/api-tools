@@ -15,7 +15,7 @@ use core_entities::ports::engine::{
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::offset::Local;
-use core_entities::entity::{code_resource::Language, service_manifest_latest};
+use core_entities::service::{code_resource::Language, service_manifest_latest};
 
 /// Wraps a non-array `result` in a single-element array unless
 /// `raw_response` is set - the shared tail behavior of [`Engine::run`] and
@@ -240,15 +240,15 @@ impl Engine {
         &self,
         service_name: &str,
         operation_name: &str,
-        service: &core_entities::entity::versioned_service_tree::V1,
-        swagger: &core_entities::entity::SwaggerService,
-        credentials: Option<credential_entities::entity::Authentication>,
+        service: &core_entities::service::versioned_service_tree::V1,
+        swagger: &core_entities::service::SwaggerService,
+        credentials: Option<credential_entities::credentials::Authentication>,
         params: Value,
         options: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
         if let Some(connector) = &self.connector {
-            let default_api = core_entities::entity::CommonApi::default();
+            let default_api = core_entities::service::CommonApi::default();
             let api = service.common_api.as_ref().unwrap_or(&default_api);
             let creds = credentials.as_ref();
 
@@ -281,8 +281,8 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        service: &core_entities::entity::versioned_service_tree::V1,
-        action: &core_entities::entity::ActionService,
+        service: &core_entities::service::versioned_service_tree::V1,
+        action: &core_entities::service::ActionService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
@@ -340,7 +340,7 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        api_wrapped: &core_entities::entity::APIWrappedService,
+        api_wrapped: &core_entities::service::APIWrappedService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
@@ -366,7 +366,7 @@ impl Engine {
         identifier: &str,
         service_name: &str,
         operation_name: &str,
-        simple_code: &core_entities::entity::SimpleCodeService,
+        simple_code: &core_entities::service::SimpleCodeService,
         params: Value,
         context: &EngineInputContext,
     ) -> error::Result<Value> {
@@ -377,7 +377,7 @@ impl Engine {
                 service_name,
                 operation_name,
                 "python",
-                code.map_or("", core_entities::entity::CodeResource::code_string),
+                code.map_or("", core_entities::service::CodeResource::code_string),
                 params,
                 context,
             ),
@@ -386,7 +386,7 @@ impl Engine {
                 service_name,
                 operation_name,
                 "js",
-                code.map_or("", core_entities::entity::CodeResource::code_string),
+                code.map_or("", core_entities::service::CodeResource::code_string),
                 params,
                 context,
             ),
@@ -426,7 +426,7 @@ impl Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::WorkflowService,
+        core_entities::service::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         let (service_name, operation_name) =
@@ -549,9 +549,9 @@ impl Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::SwaggerService,
-        core_entities::entity::CommonApi,
-        Option<credential_entities::entity::Authentication>,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         let (service_name, operation_name) =
@@ -660,7 +660,7 @@ impl EngineService for Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::WorkflowService,
+        core_entities::service::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         self.resolve_workflow(identifier, context)
@@ -674,9 +674,9 @@ impl EngineService for Engine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::SwaggerService,
-        core_entities::entity::CommonApi,
-        Option<credential_entities::entity::Authentication>,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         self.resolve_data_connector(identifier, context)
@@ -742,7 +742,7 @@ impl EngineService for WeakEngine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::WorkflowService,
+        core_entities::service::WorkflowService,
         Arc<dyn WorkflowRunner>,
     )> {
         self.0
@@ -759,9 +759,9 @@ impl EngineService for WeakEngine {
     ) -> error::Result<(
         String,
         String,
-        core_entities::entity::SwaggerService,
-        core_entities::entity::CommonApi,
-        Option<credential_entities::entity::Authentication>,
+        core_entities::service::SwaggerService,
+        core_entities::service::CommonApi,
+        Option<credential_entities::credentials::Authentication>,
         Arc<dyn AsyncDataConnectionRunner>,
     )> {
         self.0
@@ -773,7 +773,7 @@ impl EngineService for WeakEngine {
 
 #[cfg(test)]
 mod tests {
-    use core_entities::entity::{
+    use core_entities::service::{
         code_resource, service_manifest, service_manifest_latest, versioned_service_tree,
         workflow_service, CodeResource, CommonApi, ServiceManifest, ServiceManifestLatest,
         SimpleCodeService, VersionedServiceTree, WorkflowService,
@@ -815,14 +815,14 @@ mod tests {
     struct FakeLookup;
 
     impl EngineLookup for FakeLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             None
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::entity::Authentication> {
+        ) -> Option<credential_entities::credentials::Authentication> {
             None
         }
     }
@@ -878,17 +878,17 @@ mod tests {
         }
     }
 
-    struct WorkflowLookup(core_entities::entity::VersionedServiceTree);
+    struct WorkflowLookup(core_entities::service::VersionedServiceTree);
 
     impl EngineLookup for WorkflowLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             Some(self.0.clone())
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::entity::Authentication> {
+        ) -> Option<credential_entities::credentials::Authentication> {
             None
         }
     }

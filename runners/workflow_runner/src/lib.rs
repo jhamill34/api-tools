@@ -51,7 +51,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use core_entities::entity::WorkflowService as WorkflowManifest;
+use core_entities::service::WorkflowService as WorkflowManifest;
 use core_entities::ports::engine::{
     self, error::ExecutionEngine, DataConnectorBundle, EngineInputContext, EngineService,
     WorkflowRunner,
@@ -308,7 +308,7 @@ impl WorkflowRunner for WorkflowAdapter {
     ) -> engine::error::Result<Value> {
         if matches!(
             &manifest.source,
-            Some(core_entities::entity::workflow_service::Source::ResourcePath(_))
+            Some(core_entities::service::workflow_service::Source::ResourcePath(_))
         ) {
             return Err(ExecutionEngine::Unimplemented(
                 "Workflow source loaded from a resourcePath (only codeString is supported)".into(),
@@ -345,7 +345,7 @@ mod tests {
     /// Builds a [`WorkflowManifest`] with `code` as its inline Lua source.
     fn workflow_manifest(code: &str) -> WorkflowManifest {
         WorkflowManifest {
-            source: Some(core_entities::entity::workflow_service::Source::CodeString(
+            source: Some(core_entities::service::workflow_service::Source::CodeString(
                 code.to_owned(),
             )),
             ..Default::default()
@@ -355,14 +355,14 @@ mod tests {
     struct EmptyLookup;
 
     impl EngineLookup for EmptyLookup {
-        fn get_service(&self, _id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
+        fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             None
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::entity::Authentication> {
+        ) -> Option<credential_entities::credentials::Authentication> {
             None
         }
     }
@@ -377,7 +377,7 @@ mod tests {
     #[tokio::test]
     async fn workflow_adapter_runs_lua_source_from_the_manifest() {
         let manifest = WorkflowManifest {
-            source: Some(core_entities::entity::workflow_service::Source::CodeString(
+            source: Some(core_entities::service::workflow_service::Source::CodeString(
                 "return input.x + 1".to_owned(),
             )),
             ..Default::default()
@@ -405,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn workflow_adapter_rejects_a_resource_path_manifest() {
         let manifest = WorkflowManifest {
-            source: Some(core_entities::entity::workflow_service::Source::ResourcePath(
+            source: Some(core_entities::service::workflow_service::Source::ResourcePath(
                 "workflow.lua".to_owned(),
             )),
             ..Default::default()
@@ -447,17 +447,17 @@ mod tests {
         }
     }
 
-    struct SingleServiceLookup(core_entities::entity::VersionedServiceTree);
+    struct SingleServiceLookup(core_entities::service::VersionedServiceTree);
 
     impl EngineLookup for SingleServiceLookup {
-        fn get_service(&self, id: &str) -> Option<core_entities::entity::VersionedServiceTree> {
+        fn get_service(&self, id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             (id == "other").then(|| self.0.clone())
         }
 
         fn get_credentials(
             &self,
             _id: &str,
-        ) -> Option<credential_entities::entity::Authentication> {
+        ) -> Option<credential_entities::credentials::Authentication> {
             None
         }
     }
@@ -467,8 +467,8 @@ mod tests {
     /// registers a `FakeCodeRunner` rather than a real runtime) manifest -
     /// what `api.run` inside a workflow script needs to find via
     /// `Engine::run` for a nested call to actually dispatch anywhere.
-    fn simple_code_service() -> core_entities::entity::VersionedServiceTree {
-        use core_entities::entity::{
+    fn simple_code_service() -> core_entities::service::VersionedServiceTree {
+        use core_entities::service::{
             code_resource, service_manifest, service_manifest_latest, versioned_service_tree,
             CodeResource, ServiceManifest, ServiceManifestLatest, SimpleCodeService,
             VersionedServiceTree,
@@ -505,8 +505,8 @@ mod tests {
     /// an empty `CommonApi` - what `api.call` inside a workflow script
     /// needs to find via `Engine::resolve_data_connector` for a nested
     /// call to actually resolve.
-    fn swagger_service() -> core_entities::entity::VersionedServiceTree {
-        use core_entities::entity::{
+    fn swagger_service() -> core_entities::service::VersionedServiceTree {
+        use core_entities::service::{
             service_manifest, service_manifest_latest, versioned_service_tree, CommonApi,
             ServiceManifest, ServiceManifestLatest, VersionedServiceTree,
         };

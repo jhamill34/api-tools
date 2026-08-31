@@ -9,12 +9,12 @@ use std::collections::HashMap;
 
 use base64::Engine as _;
 use common_data_structures::log_writer::LogWriter;
-use core_entities::entity::{Operation, Pagination, Parameter, SwaggerService};
+use core_entities::service::{Operation, Pagination, Parameter, SwaggerService};
 use core_entities::ports::engine::{
     self, AsyncDataConnectionRunner, DataConnectionRunner, DataConnectorBundle,
     EngineInputContext,
 };
-use credential_entities::entity::Authentication;
+use credential_entities::credentials::Authentication;
 use http::{HeaderMap, HeaderName, HeaderValue};
 
 /// Converts a scalar JSON value to its string form, for use as a header,
@@ -87,14 +87,14 @@ fn find_results<'item>(
 ) -> error::Result<&'item serde_json::Value> {
     let results_path = match pagination_config {
         Some(Pagination::PageOffset(page_offset)) => {
-            page_offset.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
+            page_offset.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
         }
         Some(Pagination::MultiCursor(cursor)) => {
-            cursor.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
+            cursor.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
         }
-        Some(Pagination::Offset(offset)) => offset.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path),
+        Some(Pagination::Offset(offset)) => offset.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path),
         Some(Pagination::Unpaginated(unpaginated)) => {
-            unpaginated.results_path.as_ref().map(core_entities::entity::pagination::ExtendedPath::jmes_path)
+            unpaginated.results_path.as_ref().map(core_entities::service::pagination::ExtendedPath::jmes_path)
         }
         Some(Pagination::NextUrl(_)) | None => None,
     };
@@ -126,7 +126,7 @@ fn find_results<'item>(
 /// branch that needs one static auth parameter (as opposed to
 /// [`Authentication`] itself, which comes from `creds` instead).
 fn required_auth_param<'auth>(
-    defined_auth: &'auth core_entities::entity::swagger_service::ServiceAuth,
+    defined_auth: &'auth core_entities::service::swagger_service::ServiceAuth,
     key: &str,
 ) -> error::Result<&'auth str> {
     Ok(defined_auth
@@ -356,7 +356,7 @@ impl APICallState {
     /// unset/default variant, since there's no sensible method to fall
     /// back to.
     fn set_method(&mut self, operation: &Operation) -> error::Result<()> {
-        use core_entities::entity::operation::HttpMethodType;
+        use core_entities::service::operation::HttpMethodType;
 
         self.method = match operation.method {
             HttpMethodType::Post => String::from("POST"),
@@ -406,7 +406,7 @@ impl APICallState {
             }
 
             if let Some(value) = value {
-                use core_entities::entity::parameter::InType;
+                use core_entities::service::parameter::InType;
 
                 match defined_param.r#in {
                     InType::Query => {
@@ -447,7 +447,7 @@ impl APICallState {
         manifest: &SwaggerService,
         creds: Option<&Authentication>,
     ) -> error::Result<()> {
-        use core_entities::entity::swagger_service::service_auth::Type;
+        use core_entities::service::swagger_service::service_auth::Type;
 
         let Some(defined_auth) = &manifest.auth else {
             return Ok(());
@@ -1031,7 +1031,7 @@ mod tests {
         thread,
     };
 
-    use core_entities::entity::{
+    use core_entities::service::{
         operation::HttpMethodType, parameter::InType, swagger_service::service_auth::Type,
         swagger_service::ServiceAuth, Operation, SwaggerService,
     };
@@ -1158,7 +1158,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut api = core_entities::entity::CommonApi {
+        let mut api = core_entities::service::CommonApi {
             base_path: Some(base_url),
             ..Default::default()
         };

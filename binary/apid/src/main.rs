@@ -19,9 +19,9 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use core_entities::entity::{service_manifest_latest, VersionedServiceTree};
+use core_entities::service::{service_manifest_latest, VersionedServiceTree};
 use core_entities::ports::engine::{self, EngineInputContext, EngineLookup, EngineService};
-use credential_entities::entity::Authentication;
+use credential_entities::credentials::Authentication;
 use dotenv::dotenv;
 use engine_entities::engine::{
     engine_server::{Engine, EngineServer},

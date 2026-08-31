@@ -9,7 +9,7 @@ pub mod error;
 
 use std::io;
 
-use core_entities::entity::{
+use core_entities::service::{
     service_manifest, service_manifest_latest, versioned_service_tree, ServiceManifestLatest,
     SwaggerOverrides, VersionedServiceTree,
 };
@@ -235,7 +235,7 @@ mod test {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use credential_entities::entity::Authentication;
+    use credential_entities::credentials::Authentication;
 
     use super::*;
 

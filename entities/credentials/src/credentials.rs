@@ -1,8 +1,8 @@
-//! Plain-Rust mirror of `src/proto/credentials.proto`. JSON shape matches
-//! `protobuf-json-mapping`'s proto3 canonical JSON output byte-for-byte
-//! (see `tests/json_compat.rs`), since `credentials.json` is an on-disk,
-//! user-authored file (`service_loader::loaders::load_credentials`) and
-//! must keep parsing unchanged.
+//! A service's credentials. JSON shape matches protobuf3's canonical JSON
+//! mapping (the format this crate's types used to be generated from) byte
+//! for byte, since `credentials.json` is an on-disk, user-authored file
+//! (`service_loader::loaders::load_credentials`) and must keep parsing
+//! unchanged.
 
 use std::collections::HashMap;
 

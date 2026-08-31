@@ -9,7 +9,7 @@ use std::{
     io,
 };
 
-use core_entities::entity as service;
+use core_entities::service;
 
 use crate::{error, Fetcher};
 

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use core_entities::entity::VersionedServiceTree;
-use credential_entities::entity::Authentication;
+use core_entities::service::VersionedServiceTree;
+use credential_entities::credentials::Authentication;
 
 pub struct EnvironmentState {
     pub service: VersionedServiceTree,
@@ -29,7 +29,7 @@ mod tests {
         let env = EnvironmentState {
             service: VersionedServiceTree::default(),
             creds: Arc::new(Mutex::new(Authentication::Header(
-                credential_entities::entity::HeaderCredentials::default(),
+                credential_entities::credentials::HeaderCredentials::default(),
             ))),
             redirect_uri: String::new(),
         };

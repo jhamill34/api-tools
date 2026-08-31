@@ -23,12 +23,6 @@ pub enum ExecutableErr {
     },
 
     #[error(transparent)]
-    Protobuf {
-        #[from]
-        source: protobuf_json_mapping::PrintError,
-    },
-
-    #[error(transparent)]
     RocketError {
         #[from]
         source: rocket::Error,

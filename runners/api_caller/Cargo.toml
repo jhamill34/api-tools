@@ -24,7 +24,6 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-protobuf = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

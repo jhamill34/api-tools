@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail};
 use common_data_structures::trie::Trie;
-use core_entities::entity::{
+use core_entities::service::{
     common_parameter::ParameterType, schema_object::SchemaType, service_manifest_latest,
     ApiResponse, CommonApi, MediaType, Schema, SchemaObject, SchemaValue, VersionedServiceTree,
 };
