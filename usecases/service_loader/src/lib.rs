@@ -9,8 +9,11 @@ pub mod error;
 
 use std::io;
 
-use core_entities::service::{SwaggerOverrides, VersionedServiceTree};
-use credential_entities::credentials::Authentication;
+use core_entities::entity::{
+    service_manifest, service_manifest_latest, versioned_service_tree, ServiceManifestLatest,
+    SwaggerOverrides, VersionedServiceTree,
+};
+use credential_entities::entity::Authentication;
 use loaders::{load_configuration, load_credentials, load_service};
 
 /// An output port [`ServiceLoader`] writes loaded data to.
@@ -60,73 +63,85 @@ pub fn merge(
     service: &mut VersionedServiceTree,
     overrides: &SwaggerOverrides,
 ) -> error::Result<()> {
-    let service = service.mut_v1();
+    if !matches!(&service.version, Some(versioned_service_tree::Version::V1(_))) {
+        service.version = Some(versioned_service_tree::Version::V1(
+            versioned_service_tree::V1::default(),
+        ));
+    }
+    let Some(versioned_service_tree::Version::V1(service)) = &mut service.version else {
+        unreachable!("just set to Some(Version::V1(_)) above")
+    };
 
     let api = service
-        .commonApi
+        .common_api
         .as_mut()
         .ok_or_else(|| error::ServiceLoader::NotFound("Common API".into()))?;
 
-    let mut base_path = api.basePath().to_owned();
-    if !overrides.baseUrl.is_empty() {
+    let mut base_path = api.base_path.clone().unwrap_or_default();
+    if !overrides.base_url.is_empty() {
         if base_path.contains("{{baseUrl}}") {
-            base_path = base_path.replace("{{baseUrl}}", &overrides.baseUrl);
+            base_path = base_path.replace("{{baseUrl}}", &overrides.base_url);
         } else {
-            base_path = overrides.baseUrl.clone();
+            base_path = overrides.base_url.clone();
         }
     }
 
     // Set server variables
-    for (key, value) in &overrides.serverVariables {
+    for (key, value) in &overrides.server_variables {
         let key = ["{", key, "}"].join("");
         base_path = base_path.replace(&key, value);
     }
 
-    api.set_basePath(base_path);
+    api.base_path = Some(base_path);
 
     let manifest = service
         .manifest
         .as_mut()
         .ok_or_else(|| error::ServiceLoader::NotFound("Service Manifest".into()))?;
-    let manifest = manifest.mut_v2().mut_swagger();
+    if !matches!(&manifest.value, Some(service_manifest::Value::V2(_))) {
+        manifest.value = Some(service_manifest::Value::V2(ServiceManifestLatest::default()));
+    }
+    let Some(service_manifest::Value::V2(latest)) = &mut manifest.value else {
+        unreachable!("just set to Some(Value::V2(_)) above")
+    };
+    if !matches!(
+        &latest.value,
+        Some(service_manifest_latest::Value::Swagger(_))
+    ) {
+        latest.value = Some(service_manifest_latest::Value::Swagger(Box::default()));
+    }
+    let Some(service_manifest_latest::Value::Swagger(manifest)) = &mut latest.value else {
+        unreachable!("just set to Some(Value::Swagger(_)) above")
+    };
 
-    if manifest.auth.has_oauthConfig() {
-        let oauth_config = manifest
-            .auth
-            .as_mut()
-            .ok_or_else(|| error::ServiceLoader::NotFound("Auth Configuration".into()))?;
-        let oauth_config = oauth_config.mut_oauthConfig();
-
-        if let Some(core_entities::service::swagger_overrides::AuthOverrides::OauthConfig(
-            oauth_config_override,
-        )) = &overrides.authOverrides
-        {
+    if let Some(oauth_config) = manifest.auth.as_mut().and_then(|auth| auth.oauth_config.as_mut()) {
+        if let Some(oauth_config_override) = &overrides.oauth_config {
             apply_if_exists!(name, oauth_config_override => oauth_config);
-            apply_if_exists!(authUri, oauth_config_override => oauth_config);
-            apply_if_exists!(accessTokenUri, oauth_config_override => oauth_config);
-            apply_if_exists!(responseType, oauth_config_override => oauth_config);
+            apply_if_exists!(auth_uri, oauth_config_override => oauth_config);
+            apply_if_exists!(access_token_uri, oauth_config_override => oauth_config);
+            apply_if_exists!(response_type, oauth_config_override => oauth_config);
             apply_if_exists!(prompt, oauth_config_override => oauth_config);
-            apply_if_exists!(oauthDocumentation, oauth_config_override => oauth_config);
-            apply_if_exists!(accessTokenMethod, oauth_config_override => oauth_config);
+            apply_if_exists!(oauth_documentation, oauth_config_override => oauth_config);
+            apply_if_exists!(access_token_method, oauth_config_override => oauth_config);
             apply_if_exists!(scope, oauth_config_override => oauth_config);
-            // apply_if_exists!(parameterLocation, oauth_config_override => oauth_config);
-            // apply_if_exists!(needsBasicAuthHeader, oauth_config_override => oauth_config);
-            apply_if_exists!(accessTokenPath, oauth_config_override => oauth_config);
-            apply_if_exists!(enableGroupCredentials, oauth_config_override => oauth_config);
+            // apply_if_exists!(parameter_location, oauth_config_override => oauth_config);
+            // apply_if_exists!(needs_basic_auth_header, oauth_config_override => oauth_config);
+            apply_if_exists!(access_token_path, oauth_config_override => oauth_config);
+            apply_if_exists!(enable_group_credentials, oauth_config_override => oauth_config);
             apply_if_exists!(audience, oauth_config_override => oauth_config);
-            // apply_if_exists!(grantType, oauth_config_override => oauth_config);
+            // apply_if_exists!(grant_type, oauth_config_override => oauth_config);
         }
 
-        if oauth_config.authUri.contains("{{baseUrl}}") {
-            oauth_config.authUri = oauth_config
-                .authUri
-                .replace("{{baseUrl}}", &overrides.baseUrl);
+        if oauth_config.auth_uri.contains("{{baseUrl}}") {
+            oauth_config.auth_uri = oauth_config
+                .auth_uri
+                .replace("{{baseUrl}}", &overrides.base_url);
         }
 
-        if oauth_config.accessTokenUri.contains("{{baseUrl}}") {
-            oauth_config.accessTokenUri = oauth_config
-                .accessTokenUri
-                .replace("{{baseUrl}}", &overrides.baseUrl);
+        if oauth_config.access_token_uri.contains("{{baseUrl}}") {
+            oauth_config.access_token_uri = oauth_config
+                .access_token_uri
+                .replace("{{baseUrl}}", &overrides.base_url);
         }
     }
 
@@ -164,7 +179,12 @@ impl ServiceLoader {
     ) -> error::Result<()> {
         let mut value = load_service(fetcher, only_manifest)?;
 
-        if !only_manifest && value.v1().manifest.v2().has_swagger() {
+        if !only_manifest
+            && matches!(
+                &value.v1().manifest_latest().value,
+                Some(service_manifest_latest::Value::Swagger(_))
+            )
+        {
             match load_credentials(fetcher) {
                 Ok(creds) => output.handle_credentials(id, creds)?,
                 Err(error::ServiceLoader::Io { source })

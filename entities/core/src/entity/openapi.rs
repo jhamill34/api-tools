@@ -360,10 +360,23 @@ pub struct MediaType {
 }
 
 /// A JSON Schema value: either a `$ref`, an inline object/array/scalar
-/// schema, or a composed (`allOf`/`anyOf`/`oneOf`) schema.
+/// schema, a composed (`allOf`/`anyOf`/`oneOf`) schema, or - unlike every
+/// other oneof in this module - legitimately none of those: an empty `{}`
+/// schema (meaning "anything goes") is a common, valid `OpenAPI` idiom, not
+/// just an internal placeholder, so (unlike e.g. `Pagination`, whose oneof
+/// is always set by the one place that constructs one) this can't be
+/// collapsed into a bare enum the way its sibling oneofs were.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Schema {
+    /// Which kind of schema this is, or `None` for an empty `{}` schema.
+    #[serde(flatten, default, skip_serializing_if = "is_default")]
+    pub value: Option<SchemaValue>,
+}
+
+/// A [`Schema`]'s kind, once it's known to be one of these.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Schema {
+pub enum SchemaValue {
     /// A `$ref` to another schema.
     Ref(String),
     /// An inline schema.
@@ -374,6 +387,14 @@ pub enum Schema {
     AnyOf(ComposedSchema),
     /// A schema composed via `oneOf`.
     OneOf(ComposedSchema),
+}
+
+impl Schema {
+    /// Creates a [`Schema`] wrapping `value`.
+    #[must_use]
+    pub fn new(value: SchemaValue) -> Self {
+        Self { value: Some(value) }
+    }
 }
 
 /// An inline JSON Schema object/array/scalar definition.

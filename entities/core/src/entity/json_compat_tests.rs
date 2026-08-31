@@ -146,7 +146,9 @@ fn swagger_manifest_round_trips_through_the_full_tree() {
                                 name: "id".into(),
                                 required: true,
                                 r#in: entity::parameter::InType::Path,
-                                schema: Some(entity::Schema::Ref("#/schemas/Id".into())),
+                                schema: Some(entity::Schema::new(entity::SchemaValue::Ref(
+                                    "#/schemas/Id".into(),
+                                ))),
                                 ..Default::default()
                             }],
                             pagination: Some(entity::Pagination::Unpaginated(
@@ -164,13 +166,15 @@ fn swagger_manifest_round_trips_through_the_full_tree() {
                     .collect(),
                     schemas: [(
                         "Widget".to_owned(),
-                        entity::Schema::AllOf(entity::ComposedSchema {
-                            schema: vec![entity::Schema::SchemaObject(entity::SchemaObject {
-                                r#type: entity::schema_object::SchemaType::Object,
-                                name: "Widget".into(),
-                                ..Default::default()
-                            })],
-                        }),
+                        entity::Schema::new(entity::SchemaValue::AllOf(entity::ComposedSchema {
+                            schema: vec![entity::Schema::new(entity::SchemaValue::SchemaObject(
+                                entity::SchemaObject {
+                                    r#type: entity::schema_object::SchemaType::Object,
+                                    name: "Widget".into(),
+                                    ..Default::default()
+                                },
+                            ))],
+                        })),
                     )]
                     .into_iter()
                     .collect(),
@@ -339,4 +343,19 @@ fn empty_manifest_omits_every_default_valued_field() {
 
     let new_tree = entity::VersionedServiceTree::default();
     assert_same_json(&old_json, &new_tree);
+}
+
+#[test]
+fn empty_object_schema_round_trips_as_an_unset_oneof_not_an_error() {
+    // A `{}` schema ("anything goes") is a common, valid OpenAPI idiom, not
+    // just an internal placeholder - unlike every other oneof in
+    // service.proto, an entirely-unset Schema is a real, reachable state
+    // (see entity::Schema's doc comment).
+    let old_schema = old::Schema::new();
+    let old_json = protobuf_json_mapping::print_to_string(&old_schema).unwrap();
+    assert_eq!(old_json, "{}");
+
+    let new_schema = entity::Schema::default();
+    assert_same_json(&old_json, &new_schema);
+    assert_eq!(new_schema.value, None);
 }

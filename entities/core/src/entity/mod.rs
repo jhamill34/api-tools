@@ -52,6 +52,7 @@ pub use manifest::{
 pub use openapi::{
     operation, pagination, parameter, schema_object, ApiResponse, ApiResponses, CommonApi,
     ComposedSchema, MediaType, Operation, Pagination, Parameter, RequestBody, Schema, SchemaObject,
+    SchemaValue,
 };
 pub use params::{common_parameter, McOperationParameter, OperationParameter};
 
