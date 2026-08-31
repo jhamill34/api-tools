@@ -7,6 +7,11 @@ edition = "2021"
 
 [dependencies]
 protobuf = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+protobuf-json-mapping = { workspace = true }
 
 [build-dependencies]
 protobuf = { workspace = true }
