@@ -108,10 +108,8 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "http",
  "jsonptr",
- "protobuf",
  "reqwest",
  "serde_json",
  "tempfile",
@@ -135,8 +133,6 @@ dependencies = [
  "engine_entities",
  "oauth_flow",
  "prost",
- "protobuf",
- "protobuf-json-mapping",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -167,7 +163,6 @@ dependencies = [
  "local_file_loader",
  "notify",
  "prost",
- "protobuf",
  "python_runner",
  "serde",
  "serde_json",
@@ -493,9 +488,12 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 name = "core_entities"
 version = "0.1.0"
 dependencies = [
- "protobuf",
- "protobuf-codegen",
- "walkdir",
+ "anyhow",
+ "async-trait",
+ "credential_entities",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -511,8 +509,7 @@ dependencies = [
 name = "credential_entities"
 version = "0.1.0"
 dependencies = [
- "protobuf",
- "protobuf-codegen",
+ "serde",
 ]
 
 [[package]]
@@ -703,7 +700,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "protobuf",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -749,7 +745,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "jmespath",
  "lazy_static",
  "regex",
@@ -1171,12 +1166,8 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
- "protobuf",
- "protobuf-json-mapping",
  "regex",
  "serde_json",
- "service_loader",
  "thiserror",
 ]
 
@@ -1273,7 +1264,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "lazy_static",
  "mini-v8",
  "regex",
@@ -1367,8 +1357,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 name = "local_file_loader"
 version = "0.1.0"
 dependencies = [
- "service_loader",
- "service_writer",
+ "core_entities",
  "thiserror",
 ]
 
@@ -1631,7 +1620,6 @@ dependencies = [
  "core_entities",
  "credential_entities",
  "jmespath",
- "protobuf-json-mapping",
  "reqwest",
  "rocket",
  "serde_json",
@@ -2003,68 +1991,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "protobuf"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b65f4a8ec18723a734e5dc09c173e0abf9690432da5340285d536edcb4dac190"
-dependencies = [
- "once_cell",
- "protobuf-support",
- "thiserror",
-]
-
-[[package]]
-name = "protobuf-codegen"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e85514a216b1c73111d9032e26cc7a5ecb1bb3d4d9539e91fb72a4395060f78"
-dependencies = [
- "anyhow",
- "once_cell",
- "protobuf",
- "protobuf-parse",
- "regex",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "protobuf-json-mapping"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "523039a90666b229b5260fb91c20686ef309b9d1b1fc3cacb283a0895753ec44"
-dependencies = [
- "protobuf",
- "protobuf-support",
- "thiserror",
-]
-
-[[package]]
-name = "protobuf-parse"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77d6fbd6697c9e531873e81cec565a85e226b99a0f10e1acc079be057fe2fcba"
-dependencies = [
- "anyhow",
- "indexmap 1.9.3",
- "log",
- "protobuf",
- "protobuf-support",
- "tempfile",
- "thiserror",
- "which 4.4.2",
-]
-
-[[package]]
-name = "protobuf-support"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6872f4d4f4b98303239a2b5838f5bbbb77b01ffc892d627957f37a22d7cfe69c"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
 name = "pyo3"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2132,7 +2058,6 @@ dependencies = [
  "common_data_structures",
  "core_entities",
  "credential_entities",
- "execution_engine",
  "lazy_static",
  "pyo3",
  "regex",
@@ -2632,8 +2557,6 @@ dependencies = [
  "core_entities",
  "credential_entities",
  "jsonptr",
- "protobuf",
- "protobuf-json-mapping",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2648,8 +2571,6 @@ dependencies = [
  "anyhow",
  "core_entities",
  "credential_entities",
- "protobuf",
- "protobuf-json-mapping",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3857,7 +3778,6 @@ dependencies = [
  "credential_entities",
  "execution_engine",
  "mlua",
- "protobuf",
  "serde_json",
  "tempfile",
  "tokio",

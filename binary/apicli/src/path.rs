@@ -5,7 +5,10 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail};
 use common_data_structures::trie::Trie;
-use core_entities::service::VersionedServiceTree;
+use core_entities::service::{
+    common_parameter::ParameterType, schema_object::SchemaType, service_manifest_latest,
+    ApiResponse, CommonApi, MediaType, Schema, SchemaObject, SchemaValue, VersionedServiceTree,
+};
 
 /// Lists `operation`'s input fields as one [`ParameterPathItem`] per field,
 /// driven by the service's manifest type: schema-derived paths for an
@@ -18,20 +21,22 @@ pub fn get_input_paths(
     operation: &str,
     required: bool,
 ) -> anyhow::Result<Vec<ParameterPathItem>> {
-    let service = service.v1();
-    let manifest = &service.manifest.v2().value;
+    let v1 = service.v1();
+    let manifest = v1.manifest_latest();
 
     let mut input_paths = Vec::new();
 
-    match manifest {
-        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
-            let operation = service
-                .commonApi
+    match &manifest.value {
+        Some(service_manifest_latest::Value::Swagger(_)) => {
+            let empty_api = CommonApi::default();
+            let api = v1.common_api.as_ref().unwrap_or(&empty_api);
+
+            let operation = api
                 .operations
                 .get(operation)
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
-            let types = &service.commonApi.schemas;
+            let types = &api.schemas;
 
             for parameter in &operation.parameter {
                 if required && !parameter.required {
@@ -43,7 +48,7 @@ pub fn get_input_paths(
                 let mut prefix = vec![];
                 populate_schema_list(
                     &mut input_paths,
-                    &parameter.schema.value,
+                    parameter.schema.as_ref(),
                     types,
                     &mut seen,
                     &mut path,
@@ -52,9 +57,9 @@ pub fn get_input_paths(
                 );
             }
 
-            if operation.requestBody.is_some() {
-                let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
-                for (key, value) in &operation.requestBody.content {
+            if let Some(request_body) = &operation.request_body {
+                let mut trie: Trie<MediaType> = Trie::default();
+                for (key, value) in &request_body.content {
                     trie.insert(key, value.clone());
                 }
 
@@ -64,7 +69,7 @@ pub fn get_input_paths(
                     let mut prefix = vec![];
                     populate_schema_list(
                         &mut input_paths,
-                        &content.schema.value,
+                        content.schema.as_ref(),
                         types,
                         &mut seen,
                         &mut path,
@@ -74,12 +79,12 @@ pub fn get_input_paths(
                 }
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
+        Some(service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
                 .find(|op| op.id == operation)
-                .map(core_entities::service::action_service::ActionOperation::function)
+                .and_then(|op| op.function.as_ref())
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
             for param in &operation.parameters {
@@ -88,22 +93,24 @@ pub fn get_input_paths(
                 }
                 populate_parameter_list(
                     &mut input_paths,
-                    param.type_,
+                    param.r#type,
                     &param.name,
                     &param.description,
                 );
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
+        Some(service_manifest_latest::Value::ApiWrapped(_)) => {
             bail!("Unimplemented manifest type: ApiWrapped")
         }
-        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
-        _ => bail!("Unknown manifest type"),
+        Some(service_manifest_latest::Value::Workflow(_)) | None => {
+            bail!("Unknown manifest type")
+        }
     }
 
     Ok(input_paths)
@@ -119,29 +126,31 @@ pub fn get_output_paths(
     service: &VersionedServiceTree,
     operation: &str,
 ) -> anyhow::Result<Vec<ParameterPathItem>> {
-    let service = service.v1();
-    let manifest = &service.manifest.v2().value;
+    let v1 = service.v1();
+    let manifest = v1.manifest_latest();
 
     let mut output_paths = Vec::new();
 
-    match manifest {
-        Some(core_entities::service::service_manifest_latest::Value::Swagger(_)) => {
-            let operation = service
-                .commonApi
+    match &manifest.value {
+        Some(service_manifest_latest::Value::Swagger(_)) => {
+            let empty_api = CommonApi::default();
+            let api = v1.common_api.as_ref().unwrap_or(&empty_api);
+
+            let operation = api
                 .operations
                 .get(operation)
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
-            let types = &service.commonApi.schemas;
+            let types = &api.schemas;
 
-            if operation.apiResponses.is_some() {
-                let mut status_codes: Trie<core_entities::service::ApiResponse> = Trie::default();
-                for (key, value) in &operation.apiResponses.apiResponses {
+            if let Some(api_responses) = &operation.api_responses {
+                let mut status_codes: Trie<ApiResponse> = Trie::default();
+                for (key, value) in &api_responses.api_responses {
                     status_codes.insert(key, value.clone());
                 }
 
                 if let Some(response) = status_codes.find("200") {
-                    let mut trie: Trie<core_entities::service::MediaType> = Trie::default();
+                    let mut trie: Trie<MediaType> = Trie::default();
                     for (key, value) in &response.content {
                         trie.insert(key, value.clone());
                     }
@@ -153,7 +162,7 @@ pub fn get_output_paths(
 
                         populate_schema_list(
                             &mut output_paths,
-                            &content.schema.value,
+                            content.schema.as_ref(),
                             types,
                             &mut seen,
                             &mut path,
@@ -164,33 +173,35 @@ pub fn get_output_paths(
                 }
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::Action(manifest)) => {
+        Some(service_manifest_latest::Value::Action(manifest)) => {
             let operation = manifest
                 .operations
                 .iter()
                 .find(|op| op.id == operation)
-                .map(core_entities::service::action_service::ActionOperation::function)
+                .and_then(|op| op.function.as_ref())
                 .ok_or_else(|| anyhow!("Operation not found"))?;
 
             for param in &operation.outputs {
                 populate_parameter_list(
                     &mut output_paths,
-                    param.type_,
+                    param.r#type,
                     &param.name,
                     &param.description,
                 );
             }
         }
-        Some(core_entities::service::service_manifest_latest::Value::ApiWrapped(_)) => {
+        Some(service_manifest_latest::Value::ApiWrapped(_)) => {
             bail!("Unimplemented manifest type: ApiWrapped")
         }
-        Some(core_entities::service::service_manifest_latest::Value::SimpleCode(_)) => {
+        Some(service_manifest_latest::Value::SimpleCode(_)) => {
             bail!("Unimplemented manifest type: SimpleCode")
         }
-        Some(core_entities::service::service_manifest_latest::Value::ScriptedAction(_)) => {
+        Some(service_manifest_latest::Value::ScriptedAction(_)) => {
             bail!("Unimplemented manifest type: ScriptedAction")
         }
-        _ => bail!("Unknown manifest type"),
+        Some(service_manifest_latest::Value::Workflow(_)) | None => {
+            bail!("Unknown manifest type")
+        }
     }
 
     Ok(output_paths)
@@ -232,68 +243,26 @@ impl ParameterPathItem {
 /// panicking).
 pub fn populate_parameter_list(
     list: &mut Vec<ParameterPathItem>,
-    param: protobuf::EnumOrUnknown<core_entities::service::common_parameter::ParameterType>,
+    param: ParameterType,
     name: &str,
     description: &str,
 ) {
-    match param.enum_value_or_default() {
-        core_entities::service::common_parameter::ParameterType::UNSET => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "UNKNOWN".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::STRING => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "STRING".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::INTEGER => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "INTEGER".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::NUMBER => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "NUMBER".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::BOOLEAN => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "BOOLEAN".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::OBJECT => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "OBJECT".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-        core_entities::service::common_parameter::ParameterType::ARRAY => {
-            list.push(ParameterPathItem::new(
-                name.to_owned(),
-                "ARRAY".to_owned(),
-                None,
-                description.to_owned(),
-            ));
-        }
-    }
+    let type_name = match param {
+        ParameterType::Unset => "UNKNOWN",
+        ParameterType::String => "STRING",
+        ParameterType::Integer => "INTEGER",
+        ParameterType::Number => "NUMBER",
+        ParameterType::Boolean => "BOOLEAN",
+        ParameterType::Object => "OBJECT",
+        ParameterType::Array => "ARRAY",
+    };
+
+    list.push(ParameterPathItem::new(
+        name.to_owned(),
+        type_name.to_owned(),
+        None,
+        description.to_owned(),
+    ));
 }
 
 /// Appends [`ParameterPathItem`]s for `schema` into `list`: resolves a
@@ -301,20 +270,23 @@ pub fn populate_parameter_list(
 /// marker instead of recursing forever on a cycle), delegates to
 /// [`populate_schema_object_list`] for an inline schema object, or
 /// recurses into each branch of an `allOf`/`oneOf`/`anyOf` composition
-/// (tagging `oneOf`/`anyOf` branches in `prefix`).
+/// (tagging `oneOf`/`anyOf` branches in `prefix`). A `None`/empty `{}`
+/// schema (see [`Schema`]'s doc comment) contributes nothing.
 pub fn populate_schema_list(
     list: &mut Vec<ParameterPathItem>,
-    schema: &Option<core_entities::service::schema::Value>,
-    types: &HashMap<String, core_entities::service::Schema>,
+    schema: Option<&Schema>,
+    types: &HashMap<String, Schema>,
     seen: &mut HashMap<String, String>,
     path: &mut Vec<String>,
     is_required: bool,
     prefix: &mut Vec<String>,
 ) {
-    match schema {
-        Some(core_entities::service::schema::Value::Ref(reference)) => {
-            let schema = types.get(reference).cloned().and_then(|s| s.value);
+    let Some(value) = schema.and_then(|s| s.value.as_ref()) else {
+        return;
+    };
 
+    match value {
+        SchemaValue::Ref(reference) => {
             if seen.contains_key(reference) {
                 let ref_type = format!(
                     "$ref:{}",
@@ -332,32 +304,39 @@ pub fn populate_schema_list(
             }
 
             seen.insert(reference.clone(), path.join(""));
-            populate_schema_list(list, &schema, types, seen, path, is_required, prefix);
+            populate_schema_list(
+                list,
+                types.get(reference),
+                types,
+                seen,
+                path,
+                is_required,
+                prefix,
+            );
             seen.remove(reference);
         }
-        Some(core_entities::service::schema::Value::SchemaObject(schema)) => {
+        SchemaValue::SchemaObject(schema) => {
             populate_schema_object_list(list, schema, types, seen, path, is_required, prefix);
         }
-        Some(core_entities::service::schema::Value::AllOf(all_of)) => {
+        SchemaValue::AllOf(all_of) => {
             for schema in &all_of.schema {
-                populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);
+                populate_schema_list(list, Some(schema), types, seen, path, is_required, prefix);
             }
         }
-        Some(core_entities::service::schema::Value::OneOf(one_of)) => {
+        SchemaValue::OneOf(one_of) => {
             for (idx, schema) in one_of.schema.iter().enumerate() {
                 prefix.push(format!("one:{idx}"));
-                populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);
+                populate_schema_list(list, Some(schema), types, seen, path, is_required, prefix);
                 prefix.pop();
             }
         }
-        Some(core_entities::service::schema::Value::AnyOf(any_of)) => {
+        SchemaValue::AnyOf(any_of) => {
             for (idx, schema) in any_of.schema.iter().enumerate() {
                 prefix.push(format!("any:{idx}"));
-                populate_schema_list(list, &schema.value, types, seen, path, is_required, prefix);
+                populate_schema_list(list, Some(schema), types, seen, path, is_required, prefix);
                 prefix.pop();
             }
         }
-        _ => {}
     }
 }
 
@@ -367,8 +346,8 @@ pub fn populate_schema_list(
 /// unrecognized/unset type is listed as `"UNKNOWN"` rather than panicking.
 pub fn populate_schema_object_list(
     list: &mut Vec<ParameterPathItem>,
-    schema: &core_entities::service::SchemaObject,
-    types: &HashMap<String, core_entities::service::Schema>,
+    schema: &SchemaObject,
+    types: &HashMap<String, Schema>,
     seen: &mut HashMap<String, String>,
     path: &mut Vec<String>,
     is_required: bool,
@@ -376,8 +355,8 @@ pub fn populate_schema_object_list(
 ) {
     let path_str = path.join("");
     let prefix_str = prefix.join("|");
-    match schema.type_.enum_value_or_default() {
-        core_entities::service::schema_object::SchemaType::SCHEMA_TYPE_NONE => {
+    match schema.r#type {
+        SchemaType::None => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "UNKNOWN".to_owned(),
@@ -385,7 +364,7 @@ pub fn populate_schema_object_list(
                 schema.description.clone(),
             ));
         }
-        core_entities::service::schema_object::SchemaType::STRING => {
+        SchemaType::String => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "STRING".to_owned(),
@@ -393,7 +372,7 @@ pub fn populate_schema_object_list(
                 schema.description.clone(),
             ));
         }
-        core_entities::service::schema_object::SchemaType::NUMBER => {
+        SchemaType::Number => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "NUMBER".to_owned(),
@@ -401,7 +380,7 @@ pub fn populate_schema_object_list(
                 schema.description.clone(),
             ));
         }
-        core_entities::service::schema_object::SchemaType::INTEGER => {
+        SchemaType::Integer => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "INTEGER".to_owned(),
@@ -409,7 +388,7 @@ pub fn populate_schema_object_list(
                 schema.description.clone(),
             ));
         }
-        core_entities::service::schema_object::SchemaType::BOOLEAN => {
+        SchemaType::Boolean => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "BOOLEAN".to_owned(),
@@ -417,7 +396,7 @@ pub fn populate_schema_object_list(
                 schema.description.clone(),
             ));
         }
-        core_entities::service::schema_object::SchemaType::OBJECT => {
+        SchemaType::Object => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "OBJECT".to_owned(),
@@ -431,15 +410,15 @@ pub fn populate_schema_object_list(
                 }
 
                 if path.is_empty() {
-                    path.push(key.to_string());
+                    path.push(key.clone());
                 } else {
                     path.push(format!(".{key}"));
                 }
-                populate_schema_list(list, &value.value, types, seen, path, is_required, prefix);
+                populate_schema_list(list, Some(value), types, seen, path, is_required, prefix);
                 path.pop();
             }
         }
-        core_entities::service::schema_object::SchemaType::ARRAY => {
+        SchemaType::Array => {
             list.push(ParameterPathItem::new(
                 path_str,
                 "ARRAY".to_owned(),
@@ -449,7 +428,7 @@ pub fn populate_schema_object_list(
             path.push("[0]".to_owned());
             populate_schema_list(
                 list,
-                &schema.items.value,
+                schema.items.as_deref(),
                 types,
                 seen,
                 path,
@@ -463,29 +442,22 @@ pub fn populate_schema_object_list(
 
 #[cfg(test)]
 mod tests {
-    use protobuf::EnumOrUnknown;
-
     use super::*;
 
     #[test]
-    fn populate_parameter_list_does_not_panic_on_an_unrecognized_parameter_type() {
+    fn populate_parameter_list_does_not_panic_on_an_unset_parameter_type() {
         let mut list = Vec::new();
 
-        populate_parameter_list(
-            &mut list,
-            EnumOrUnknown::from_i32(999),
-            "name",
-            "description",
-        );
+        populate_parameter_list(&mut list, ParameterType::Unset, "name", "description");
 
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].type_, "UNKNOWN");
     }
 
     #[test]
-    fn populate_schema_object_list_does_not_panic_on_an_unrecognized_schema_type() {
-        let schema = core_entities::service::SchemaObject {
-            type_: EnumOrUnknown::from_i32(999),
+    fn populate_schema_object_list_does_not_panic_on_an_unset_schema_type() {
+        let schema = SchemaObject {
+            r#type: SchemaType::None,
             ..Default::default()
         };
         let types = HashMap::new();

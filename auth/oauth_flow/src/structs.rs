@@ -28,7 +28,9 @@ mod tests {
     fn lock_creds_recovers_from_a_poisoned_lock() {
         let env = EnvironmentState {
             service: VersionedServiceTree::default(),
-            creds: Arc::new(Mutex::new(Authentication::default())),
+            creds: Arc::new(Mutex::new(Authentication::Header(
+                credential_entities::credentials::HeaderCredentials::default(),
+            ))),
             redirect_uri: String::new(),
         };
 

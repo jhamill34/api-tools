@@ -23,14 +23,6 @@ pub enum ServiceWriter {
     #[error("Unimplemented: {0}")]
     Unimplemented(String),
 
-    /// Serializing a protobuf message to its JSON representation failed.
-    #[error(transparent)]
-    Protobuf {
-        /// The underlying protobuf serialization error.
-        #[from]
-        source: protobuf_json_mapping::PrintError,
-    },
-
     /// Writing to the destination [`Storage`](crate::Storage) failed.
     #[error(transparent)]
     Io {

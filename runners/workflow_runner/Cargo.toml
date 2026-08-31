@@ -13,15 +13,14 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 
-execution_engine = { path = "../../usecases/execution_engine" }
 workflow_engine = { path = "../../prototypes/workflow_engine" }
 core_entities = { path = "../../entities/core" }
 common_data_structures = { path = "../../common/data_structures" }
 
 [dev-dependencies]
 tempfile = "3"
+execution_engine = { path = "../../usecases/execution_engine" }
 credential_entities = { path = "../../entities/credentials" }
-protobuf = { workspace = true }
 
 [lints]
 workspace = true

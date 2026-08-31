@@ -1,7 +1,7 @@
 //! Errors produced by an [`OperationRepos`](crate::OperationRepos)
 //! repository.
 
-use service_loader::error::ServiceLoader;
+use core_entities::ports::loader::LoaderOutputError;
 use thiserror::Error;
 
 /// Failure modes of a [`Repository`](crate::repo::Repository) operation.
@@ -17,22 +17,6 @@ pub enum OperationRepo {
     #[error("Operation not found: {0}")]
     OperationNotFound(String),
 
-    /// Serializing a value to its protobuf JSON representation failed.
-    #[error(transparent)]
-    ProtobufSerialize {
-        /// The underlying protobuf serialization error.
-        #[from]
-        source: protobuf_json_mapping::PrintError,
-    },
-
-    /// Parsing a value from its protobuf JSON representation failed.
-    #[error(transparent)]
-    ProtobufParse {
-        /// The underlying protobuf parse error.
-        #[from]
-        source: protobuf_json_mapping::ParseError,
-    },
-
     /// Serializing or deserializing a value as plain JSON failed.
     #[error(transparent)]
     Json {
@@ -42,10 +26,10 @@ pub enum OperationRepo {
     },
 }
 
-impl From<OperationRepo> for ServiceLoader {
+impl From<OperationRepo> for LoaderOutputError {
     #[inline]
     fn from(val: OperationRepo) -> Self {
-        ServiceLoader::Other { source: val.into() }
+        LoaderOutputError::Other { source: val.into() }
     }
 }
 

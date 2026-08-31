@@ -9,7 +9,6 @@ edition = "2021"
 dotenv = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
-protobuf = { workspace = true }
 tokio = { workspace = true }
 notify = { version = "5.1", default-features = false, features = ["macos_kqueue"] }
 serde = { workspace = true }

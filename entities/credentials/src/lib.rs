@@ -1,1 +1,3 @@
-include!(concat!(env!("OUT_DIR"), "/proto/mod.rs"));
+//! Hand-written credential entities.
+
+pub mod credentials;

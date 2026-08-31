@@ -1,4 +1,6 @@
 use base64::{engine::general_purpose, Engine as _};
+use core_entities::service::{service_manifest_latest, service_manifest_latest::oauth_config};
+use credential_entities::credentials::Authentication;
 use rocket::{Shutdown, State};
 use std::collections::HashMap;
 
@@ -12,49 +14,43 @@ pub async fn route(
 ) -> Result<(), error::CallbackResponse> {
     let client = reqwest::Client::new();
 
-    let service = &env.service;
-    let service = service.v1().manifest.v2();
+    let v1 = env.service.v1();
+    let service = v1.manifest_latest();
 
-    if !service.has_swagger() {
+    let Some(service_manifest_latest::Value::Swagger(service)) = &service.value else {
         return Err(error::CallbackResponse::BadRequest(
             "Service isn't a connector".to_string(),
         ));
-    }
+    };
 
-    let service = &service.swagger().auth;
-    if !service.has_oauthConfig() {
-        return Err(error::CallbackResponse::BadRequest(
-            "Connector doesn't use Oauth".to_string(),
-        ));
-    }
-    let oauth_config = service.oauthConfig();
+    let bad_request =
+        || error::CallbackResponse::BadRequest("Connector doesn't use Oauth".to_string());
+    let oauth_config = service
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.oauth_config.as_ref())
+        .ok_or_else(bad_request)?;
 
     let (client_id, client_secret) = {
         let creds = env.lock_creds();
-        if !creds.has_oauth() {
-            return Err(error::CallbackResponse::BadRequest(
-                "Connector doesn't use Oauth".to_string(),
-            ));
-        }
-
-        let creds = creds.oauth();
-        if creds.clientSecret.is_empty() || creds.clientId.is_empty() {
+        let creds = creds.as_oauth().ok_or_else(bad_request)?;
+        if creds.client_secret.is_empty() || creds.client_id.is_empty() {
             return Err(error::CallbackResponse::InternalError(
                 "Missing client_id/client_secret".to_string(),
             ));
         }
 
-        (creds.clientId.clone(), creds.clientSecret.clone())
+        (creds.client_id.clone(), creds.client_secret.clone())
     };
 
-    if oauth_config.accessTokenUri.is_empty() {
+    if oauth_config.access_token_uri.is_empty() {
         return Err(error::CallbackResponse::InternalError(
             "Missing access token uri".to_string(),
         ));
     }
 
     let mut response_builder = client
-        .post(oauth_config.accessTokenUri.clone())
+        .post(oauth_config.access_token_uri.clone())
         .header("Accept", "application/json");
 
     let mut body = HashMap::new();
@@ -62,9 +58,8 @@ pub async fn route(
     body.insert("code", code);
     body.insert("redirect_uri", &env.redirect_uri);
 
-    let param_location = oauth_config.parameterLocation.enum_value_or_default();
-    match param_location {
-        core_entities::service::service_manifest_latest::oauth_config::ParameterLocation::QUERY => {
+    match oauth_config.parameter_location {
+        oauth_config::ParameterLocation::Query => {
             let mut basic_credentials = String::new();
             general_purpose::STANDARD.encode_string(
                 format!("{}:{}", client_id, client_secret),
@@ -73,7 +68,7 @@ pub async fn route(
             response_builder =
                 response_builder.header("Authorization", &format!("Basic {}", basic_credentials));
         }
-        core_entities::service::service_manifest_latest::oauth_config::ParameterLocation::BODY => {
+        oauth_config::ParameterLocation::Body => {
             body.insert("client_id", &client_id);
             body.insert("client_secret", &client_secret);
         }
@@ -85,10 +80,10 @@ pub async fn route(
 
     let response_body = response_body?;
 
-    let access_token_path = if oauth_config.accessTokenPath.is_empty() {
+    let access_token_path = if oauth_config.access_token_path.is_empty() {
         String::from("access_token")
     } else {
-        oauth_config.accessTokenPath.clone()
+        oauth_config.access_token_path.clone()
     };
 
     let expression = jmespath::compile(&access_token_path).map_err(|err| {
@@ -101,8 +96,12 @@ pub async fn route(
 
     {
         let mut creds = env.lock_creds();
-        let creds = creds.mut_oauth();
-        creds.accessToken = access_token.as_string().cloned();
+        let Authentication::Oauth(creds) = &mut *creds else {
+            return Err(error::CallbackResponse::BadRequest(
+                "Connector doesn't use Oauth".to_string(),
+            ));
+        };
+        creds.access_token = access_token.as_string().cloned();
     }
 
     shutdown.notify();

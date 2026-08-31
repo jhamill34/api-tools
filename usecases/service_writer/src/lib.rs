@@ -4,23 +4,11 @@
 
 use std::{collections::HashMap, io};
 
-use core_entities::{service, service::VersionedServiceTree};
+pub use core_entities::ports::writer::Storage;
+use core_entities::service::{self, VersionedServiceTree};
 use credential_entities::credentials::Authentication;
-use protobuf::EnumFull as _;
 
 pub mod error;
-
-/// An output port [`ServiceWriter`] writes to: opens a writable destination
-/// for a given `location`.
-pub trait Storage<W>
-where
-    W: io::Write,
-{
-    /// Opens `location` for writing.
-    ///
-    /// # Errors
-    fn store(&self, location: &str) -> io::Result<W>;
-}
 
 /// Writes a service manifest or its credentials out through a [`Storage`]
 /// adapter.
@@ -54,17 +42,14 @@ impl ServiceWriter {
             .as_ref()
             .ok_or_else(|| error::ServiceWriter::NotFound("Service Manifest".into()))?;
 
-        let manifest_string = protobuf_json_mapping::print_to_string(manifest)?;
-        let manifest_string: serde_json::Value = serde_json::from_str(&manifest_string)?;
-        let manifest_string = serde_json::to_string_pretty(&manifest_string)?;
+        let manifest_string = serde_json::to_string_pretty(manifest)?;
 
         let mut manifest_location = storage.store("./manifest.json.new")?;
         manifest_location.write_all(manifest_string.as_bytes())?;
 
         let manifest = manifest.v2();
-        if manifest.has_swagger() {
-            let swagger = manifest.swagger();
-            handle_openapi(storage, &swagger.source, &service.commonApi, split)?;
+        if let Some(service::service_manifest_latest::Value::Swagger(swagger)) = &manifest.value {
+            handle_openapi(storage, &swagger.source, service.common_api.as_ref(), split)?;
         }
 
         Ok(())
@@ -79,11 +64,7 @@ impl ServiceWriter {
         credentials: &Authentication,
         storage: &dyn Storage<W>,
     ) -> error::Result<()> {
-        let creds = protobuf_json_mapping::print_to_string(credentials)?;
-
-        // Kind of annoying we do this but its just to print it nicely....
-        let creds: serde_json::Value = serde_json::from_str(&creds)?;
-        let creds = serde_json::to_string_pretty(&creds)?;
+        let creds = serde_json::to_string_pretty(credentials)?;
 
         let mut location = storage.store("./credentials.json")?;
         location.write_all(creds.as_bytes())?;
@@ -158,13 +139,19 @@ where
 fn handle_openapi<W: io::Write>(
     storage: &dyn Storage<W>,
     source: &str,
-    message: &service::CommonApi,
+    message: Option<&service::CommonApi>,
     _split: bool,
 ) -> error::Result<()> {
+    let default_api = service::CommonApi::default();
+    let message = message.unwrap_or(&default_api);
+
     let mut root = serde_json::Map::new();
 
     let mut server = serde_json::Map::new();
-    server.insert("url".into(), message.basePath().into());
+    server.insert(
+        "url".into(),
+        message.base_path.clone().unwrap_or_default().into(),
+    );
     root.insert("servers".into(), vec![server].into());
 
     if !message.description.is_empty() || !message.title.is_empty() {
@@ -228,13 +215,20 @@ fn handle_path_items(
             .as_object_mut()
             .ok_or_else(|| error::ServiceWriter::InvalidType("Object".into()))?;
 
-        let verb = match operation.method.enum_value() {
-            Ok(service::operation::HttpMethodType::HTTP_METHOD_TYPE_NONE) | Err(_) => {
+        let verb = match operation.method {
+            service::operation::HttpMethodType::None => {
                 return Err(error::ServiceWriter::Unimplemented(
                     "Non Supported HTTP VERB".into(),
                 ))
             }
-            Ok(method) => method.descriptor().name().to_lowercase(),
+            service::operation::HttpMethodType::Post => "post",
+            service::operation::HttpMethodType::Get => "get",
+            service::operation::HttpMethodType::Put => "put",
+            service::operation::HttpMethodType::Patch => "patch",
+            service::operation::HttpMethodType::Delete => "delete",
+            service::operation::HttpMethodType::Head => "head",
+            service::operation::HttpMethodType::Options => "options",
+            service::operation::HttpMethodType::Trace => "trace",
         };
 
         let path_item = path_item
@@ -277,16 +271,16 @@ fn handle_operation(
         sink.insert("parameters".into(), parameters.into());
     }
 
-    if let Some(source_body) = &source.requestBody.0 {
+    if let Some(source_body) = &source.request_body {
         let mut request_body = serde_json::Map::new();
         handle_request_body(&mut request_body, source_body)?;
         sink.insert("requestBody".into(), request_body.into());
     }
 
-    if let Some(common_responses) = &source.apiResponses.0 {
+    if let Some(common_responses) = &source.api_responses {
         let mut responses = serde_json::Map::new();
 
-        for (status, common_response) in &common_responses.apiResponses {
+        for (status, common_response) in &common_responses.api_responses {
             let mut response = serde_json::Map::new();
             handle_response(&mut response, common_response)?;
             responses.insert(status.clone(), response.into());
@@ -348,7 +342,7 @@ fn handle_media(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::MediaType,
 ) -> error::Result<()> {
-    if let Some(common_schema) = &source.schema.0 {
+    if let Some(common_schema) = &source.schema {
         let mut schema = serde_json::Map::new();
         handle_schema(&mut schema, common_schema)?;
         sink.insert("schema".into(), schema.into());
@@ -367,13 +361,19 @@ fn handle_parameter(
 ) -> error::Result<()> {
     // TODO: extract into a referece based on a flag
 
-    let in_type = source.in_.enum_value().map_err(|raw| {
-        error::ServiceWriter::Unimplemented(format!("Unrecognized parameter location: {raw}"))
-    })?;
-    sink.insert(
-        "in".into(),
-        in_type.descriptor().name().to_lowercase().into(),
-    );
+    let in_type = match source.r#in {
+        service::parameter::InType::None => {
+            return Err(error::ServiceWriter::Unimplemented(
+                "Unrecognized parameter location".into(),
+            ))
+        }
+        service::parameter::InType::Query => "query",
+        service::parameter::InType::Header => "header",
+        service::parameter::InType::Path => "path",
+        service::parameter::InType::Cookie => "cookie",
+        service::parameter::InType::Headers => "headers",
+    };
+    sink.insert("in".into(), in_type.into());
     sink.insert("name".into(), source.name.clone().into());
     sink.insert("required".into(), source.required.into());
 
@@ -381,7 +381,7 @@ fn handle_parameter(
         sink.insert("description".into(), source.description.clone().into());
     }
 
-    if let Some(common_schema) = &source.schema.0 {
+    if let Some(common_schema) = &source.schema {
         let mut schema = serde_json::Map::new();
         handle_schema(&mut schema, common_schema)?;
         sink.insert("schema".into(), schema.into());
@@ -392,7 +392,8 @@ fn handle_parameter(
 
 /// Writes a schema into `sink`: a `$ref` string, a typed schema object
 /// (recursing into object properties/array items), or an `allOf`/`anyOf`/
-/// `oneOf` composition (recursing into each branch).
+/// `oneOf` composition (recursing into each branch). An empty `{}` schema
+/// (see [`service::Schema`]'s doc comment) writes nothing into `sink`.
 fn handle_schema(
     sink: &mut serde_json::Map<String, serde_json::Value>,
     source: &service::Schema,
@@ -400,68 +401,66 @@ fn handle_schema(
     // TODO: extract into a referece based on a flag
 
     match &source.value {
-        Some(service::schema::Value::Ref(reference)) => {
+        Some(service::SchemaValue::Ref(reference)) => {
             sink.insert("$ref".into(), reference.clone().into());
         }
-        Some(service::schema::Value::SchemaObject(schema)) => {
-            match schema.type_.enum_value() {
-                Ok(service::schema_object::SchemaType::STRING) => {
-                    sink.insert("type".into(), "string".into());
-                    // TODO: format???
-                    // TODO: enum / possibleValues
-                }
-                Ok(service::schema_object::SchemaType::NUMBER) => {
-                    sink.insert("type".into(), "number".into());
-                }
-                Ok(service::schema_object::SchemaType::INTEGER) => {
-                    sink.insert("type".into(), "integer".into());
-                }
-                Ok(service::schema_object::SchemaType::BOOLEAN) => {
-                    sink.insert("type".into(), "boolean".into());
-                }
-                Ok(service::schema_object::SchemaType::OBJECT) => {
-                    sink.insert("type".into(), "object".into());
-
-                    if !schema.properties.is_empty() {
-                        let mut properties = serde_json::Map::new();
-
-                        for (key, value) in &schema.properties {
-                            let mut prop = serde_json::Map::new();
-                            handle_schema(&mut prop, value)?;
-                            properties.insert(key.clone(), prop.into());
-                        }
-
-                        sink.insert("properties".into(), properties.into());
-                    }
-
-                    if !schema.required.is_empty() {
-                        sink.insert("required".into(), schema.required.clone().into());
-                    }
-                }
-                Ok(service::schema_object::SchemaType::ARRAY) => {
-                    sink.insert("type".into(), "array".into());
-
-                    if let Some(common_items) = &schema.items.0 {
-                        let mut items = serde_json::Map::new();
-                        handle_schema(&mut items, common_items)?;
-                        sink.insert("items".into(), items.into());
-                    }
-
-                    // TODO: Max items
-                }
-                _ => {}
+        Some(service::SchemaValue::SchemaObject(schema)) => match schema.r#type {
+            service::schema_object::SchemaType::String => {
+                sink.insert("type".into(), "string".into());
+                // TODO: format???
+                // TODO: enum / possibleValues
             }
-        }
-        Some(service::schema::Value::AllOf(values)) => {
+            service::schema_object::SchemaType::Number => {
+                sink.insert("type".into(), "number".into());
+            }
+            service::schema_object::SchemaType::Integer => {
+                sink.insert("type".into(), "integer".into());
+            }
+            service::schema_object::SchemaType::Boolean => {
+                sink.insert("type".into(), "boolean".into());
+            }
+            service::schema_object::SchemaType::Object => {
+                sink.insert("type".into(), "object".into());
+
+                if !schema.properties.is_empty() {
+                    let mut properties = serde_json::Map::new();
+
+                    for (key, value) in &schema.properties {
+                        let mut prop = serde_json::Map::new();
+                        handle_schema(&mut prop, value)?;
+                        properties.insert(key.clone(), prop.into());
+                    }
+
+                    sink.insert("properties".into(), properties.into());
+                }
+
+                if !schema.required.is_empty() {
+                    sink.insert("required".into(), schema.required.clone().into());
+                }
+            }
+            service::schema_object::SchemaType::Array => {
+                sink.insert("type".into(), "array".into());
+
+                if let Some(common_items) = &schema.items {
+                    let mut items = serde_json::Map::new();
+                    handle_schema(&mut items, common_items)?;
+                    sink.insert("items".into(), items.into());
+                }
+
+                // TODO: Max items
+            }
+            service::schema_object::SchemaType::None => {}
+        },
+        Some(service::SchemaValue::AllOf(values)) => {
             handle_composed_schema(sink, "allOf", values)?;
         }
-        Some(service::schema::Value::AnyOf(values)) => {
+        Some(service::SchemaValue::AnyOf(values)) => {
             handle_composed_schema(sink, "anyOf", values)?;
         }
-        Some(service::schema::Value::OneOf(values)) => {
+        Some(service::SchemaValue::OneOf(values)) => {
             handle_composed_schema(sink, "oneOf", values)?;
         }
-        _ => {}
+        None => {}
     }
 
     Ok(())
@@ -490,15 +489,13 @@ fn handle_composed_schema(
 
 #[cfg(test)]
 mod tests {
-    use protobuf::EnumOrUnknown;
-
     use super::*;
 
     #[test]
     fn handle_parameter_does_not_panic_on_an_unrecognized_location() {
         let source = service::Parameter {
             name: "x".to_owned(),
-            in_: EnumOrUnknown::from_i32(999),
+            r#in: service::parameter::InType::None,
             ..Default::default()
         };
 
@@ -518,7 +515,7 @@ mod tests {
             "getThing".to_owned(),
             service::Operation {
                 path: "/thing".to_owned(),
-                method: service::operation::HttpMethodType::GET.into(),
+                method: service::operation::HttpMethodType::Get,
                 ..Default::default()
             },
         );
@@ -526,7 +523,7 @@ mod tests {
             "createThing".to_owned(),
             service::Operation {
                 path: "/thing".to_owned(),
-                method: service::operation::HttpMethodType::POST.into(),
+                method: service::operation::HttpMethodType::Post,
                 ..Default::default()
             },
         );
@@ -567,38 +564,30 @@ mod tests {
 
     #[test]
     fn handle_schema_writes_composed_schema_branches_under_the_matching_key() {
-        let ref_branch = |name: &str| service::Schema {
-            value: Some(service::schema::Value::Ref(name.to_owned())),
-            ..Default::default()
-        };
+        let ref_branch =
+            |name: &str| service::Schema::new(service::SchemaValue::Ref(name.to_owned()));
 
         for (value, key) in [
             (
-                service::schema::Value::AllOf(service::ComposedSchema {
+                service::SchemaValue::AllOf(service::ComposedSchema {
                     schema: vec![ref_branch("A"), ref_branch("B")],
-                    ..Default::default()
                 }),
                 "allOf",
             ),
             (
-                service::schema::Value::AnyOf(service::ComposedSchema {
+                service::SchemaValue::AnyOf(service::ComposedSchema {
                     schema: vec![ref_branch("A"), ref_branch("B")],
-                    ..Default::default()
                 }),
                 "anyOf",
             ),
             (
-                service::schema::Value::OneOf(service::ComposedSchema {
+                service::SchemaValue::OneOf(service::ComposedSchema {
                     schema: vec![ref_branch("A"), ref_branch("B")],
-                    ..Default::default()
                 }),
                 "oneOf",
             ),
         ] {
-            let source = service::Schema {
-                value: Some(value),
-                ..Default::default()
-            };
+            let source = service::Schema::new(value);
 
             let mut sink = serde_json::Map::new();
             handle_schema(&mut sink, &source).unwrap();

@@ -15,7 +15,6 @@ url = "2.2.0"
 chrono = { workspace = true }
 urlencoding = "2.1"
 
-execution_engine = { path = "../../usecases/execution_engine" }
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
@@ -25,7 +24,6 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-protobuf = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

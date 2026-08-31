@@ -6,8 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-service_loader = { path = "../../usecases/service_loader" }
-service_writer = { path = "../../usecases/service_writer" }
+core_entities = { path = "../../entities/core" }
 
 thiserror = { workspace = true }
 

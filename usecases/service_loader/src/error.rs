@@ -79,19 +79,20 @@ pub enum ServiceLoader {
         source: serde_yaml::Error,
     },
 
-    /// Parsing a value from its protobuf JSON representation failed.
-    #[error(transparent)]
-    ProtobufParse {
-        /// The underlying protobuf parse error.
-        #[from]
-        source: protobuf_json_mapping::ParseError,
-    },
-
-    /// TODO: Rename to OutputPortError
+    /// TODO: Rename to `OutputPortError`
     #[error(transparent)]
     Other {
         /// The wrapped error from an output port implementation.
         source: anyhow::Error,
+    },
+
+    /// A [`LoaderOutput`](core_entities::ports::loader::LoaderOutput) sink
+    /// failed to store loaded data.
+    #[error(transparent)]
+    LoaderOutput {
+        /// The underlying output-port error.
+        #[from]
+        source: core_entities::ports::loader::LoaderOutputError,
     },
 }
 

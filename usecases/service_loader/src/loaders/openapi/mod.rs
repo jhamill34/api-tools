@@ -9,8 +9,9 @@ use std::{
     io,
 };
 
-use crate::{error, Fetcher};
 use core_entities::service;
+
+use crate::{error, Fetcher};
 
 use self::utils::{default_field, handle_reference, optional_field, required_field};
 
@@ -21,7 +22,7 @@ use self::utils::{default_field, handle_reference, optional_field, required_fiel
 pub fn handle<R: io::Read>(
     fetcher: &dyn Fetcher<R>,
     source: &str,
-) -> error::Result<protobuf::MessageField<service::CommonApi>> {
+) -> error::Result<service::CommonApi> {
     let spec = fetcher.fetch(source)?;
     let spec = io::read_to_string(spec)?;
 
@@ -33,10 +34,10 @@ pub fn handle<R: io::Read>(
     let mut schemas = HashMap::new();
 
     // Convert spec to common api
-    let mut api = service::CommonApi::new();
+    let mut api = service::CommonApi::default();
     let server = required_field(&spec, "servers")?;
     let server = get_server(&server)?;
-    api.set_basePath(server);
+    api.base_path = Some(server);
 
     if let Some(info) = spec.get("info") {
         if let Some(description) = optional_field::<String>(info, "description")? {
@@ -62,7 +63,7 @@ pub fn handle<R: io::Read>(
 
     api.schemas = schemas;
 
-    Ok(protobuf::MessageField::some(api))
+    Ok(api)
 }
 
 /// Extracts the first entry's `url` from an `OpenAPI` `servers` array.
@@ -77,14 +78,14 @@ fn get_server(server: &serde_json::Value) -> error::Result<String> {
 /// The `OpenAPI` path-item verbs [`collect_operations`] recognizes, paired
 /// with the [`service::operation::HttpMethodType`] each one maps to.
 const HTTP_METHODS: &[(&str, service::operation::HttpMethodType)] = &[
-    ("get", service::operation::HttpMethodType::GET),
-    ("post", service::operation::HttpMethodType::POST),
-    ("put", service::operation::HttpMethodType::PUT),
-    ("patch", service::operation::HttpMethodType::PATCH),
-    ("delete", service::operation::HttpMethodType::DELETE),
-    ("head", service::operation::HttpMethodType::HEAD),
-    ("options", service::operation::HttpMethodType::OPTIONS),
-    ("trace", service::operation::HttpMethodType::TRACE),
+    ("get", service::operation::HttpMethodType::Get),
+    ("post", service::operation::HttpMethodType::Post),
+    ("put", service::operation::HttpMethodType::Put),
+    ("patch", service::operation::HttpMethodType::Patch),
+    ("delete", service::operation::HttpMethodType::Delete),
+    ("head", service::operation::HttpMethodType::Head),
+    ("options", service::operation::HttpMethodType::Options),
+    ("trace", service::operation::HttpMethodType::Trace),
 ];
 
 /// Resolves `item` (a path item, possibly a `$ref`) and converts each
@@ -105,7 +106,7 @@ fn collect_operations<R: io::Read>(
     let parameters: Vec<serde_json::Value> = default_field(item, "parameters")?;
     let mut common_params = vec![];
     for param in parameters {
-        let mut common_param = service::Parameter::new();
+        let mut common_param = service::Parameter::default();
         handle_parameter(&param, &mut common_param, root, fetcher, cache, schemas)?;
         common_params.push(common_param);
     }
@@ -114,9 +115,11 @@ fn collect_operations<R: io::Read>(
 
     for &(verb, method) in HTTP_METHODS {
         if let Some(op) = item.get(verb) {
-            let mut common_op = service::Operation::new();
-            common_op.path = path.to_owned();
-            common_op.method = method.into();
+            let mut common_op = service::Operation {
+                path: path.to_owned(),
+                method,
+                ..Default::default()
+            };
             handle_operation(
                 op,
                 &mut common_op,
@@ -156,13 +159,13 @@ fn handle_operation<R: io::Read>(
     sink.parameter.extend_from_slice(common_params);
     let parameters: Vec<serde_json::Value> = default_field(source, "parameters")?;
     for param in parameters {
-        let mut common_param = service::Parameter::new();
+        let mut common_param = service::Parameter::default();
         handle_parameter(&param, &mut common_param, root, fetcher, cache, schemas)?;
         sink.parameter.push(common_param);
     }
 
     if let Some(request_body) = source.get("requestBody") {
-        let mut common_request_body = service::RequestBody::new();
+        let mut common_request_body = service::RequestBody::default();
         handle_request_body(
             request_body,
             &mut common_request_body,
@@ -171,14 +174,14 @@ fn handle_operation<R: io::Read>(
             cache,
             schemas,
         )?;
-        sink.requestBody = protobuf::MessageField::some(common_request_body);
+        sink.request_body = Some(common_request_body);
     }
 
     let responses: HashMap<String, serde_json::Value> = default_field(source, "responses")?;
     if !responses.is_empty() {
-        let mut common_responses = service::ApiResponses::new();
+        let mut common_responses = service::ApiResponses::default();
         for (status, response) in &responses {
-            let mut common_response = service::ApiResponse::new();
+            let mut common_response = service::ApiResponse::default();
             handle_response(
                 response,
                 &mut common_response,
@@ -188,95 +191,81 @@ fn handle_operation<R: io::Read>(
                 schemas,
             )?;
             common_responses
-                .apiResponses
+                .api_responses
                 .insert(status.clone(), common_response);
         }
-        sink.apiResponses = protobuf::MessageField::some(common_responses);
+        sink.api_responses = Some(common_responses);
     }
 
     if let Some(pagination) = source.get("x-pagination") {
-        let mut common_page = service::Pagination::new();
-        handle_pagination(pagination, &mut common_page)?;
-        sink.pagination = protobuf::MessageField::some(common_page);
+        sink.pagination = Some(handle_pagination(pagination)?);
     }
 
     Ok(())
 }
 
-/// Converts an operation's `x-pagination` extension into `sink`, picking
-/// the pagination strategy (page-offset, offset, next-URL, cursor, or
-/// unpaginated) from whichever of `pageOffset`/`offset`/`nextUrl`/`cursor`
-/// is present in `source`.
-fn handle_pagination(
-    source: &serde_json::Value,
-    sink: &mut service::Pagination,
-) -> error::Result<()> {
-    let mut results_path = service::pagination::ExtendedPath::new();
-    results_path.set_jmesPath(default_field(source, "resultsPath")?);
+/// Converts an operation's `x-pagination` extension, picking the pagination
+/// strategy (page-offset, offset, next-URL, cursor, or unpaginated) from
+/// whichever of `pageOffset`/`offset`/`nextUrl`/`cursor` is present in
+/// `source`.
+fn handle_pagination(source: &serde_json::Value) -> error::Result<service::Pagination> {
+    let results_path =
+        service::pagination::ExtendedPath::JmesPath(default_field(source, "resultsPath")?);
 
-    if let Some(page_offset) = source.get("pageOffset") {
-        let mut common_page_offset = service::pagination::PageOffset::new();
-
-        common_page_offset.pageOffsetParam = default_field(page_offset, "pageOffsetParam")?;
-        common_page_offset.startPage =
-            protobuf::MessageField::some(default_field::<i32>(page_offset, "startPage")?.into());
-        common_page_offset.limitParam = default_field(page_offset, "limitParam")?;
-        common_page_offset.maxLimit =
-            protobuf::MessageField::some(default_field::<i32>(page_offset, "maxLimit")?.into());
-        common_page_offset.resultsPath = protobuf::MessageField::some(results_path);
-
-        sink.set_pageOffset(common_page_offset);
+    let pagination = if let Some(page_offset) = source.get("pageOffset") {
+        service::Pagination::PageOffset(service::pagination::PageOffset {
+            page_offset_param: default_field(page_offset, "pageOffsetParam")?,
+            start_page: Some(default_field::<i32>(page_offset, "startPage")?),
+            limit_param: default_field(page_offset, "limitParam")?,
+            max_limit: Some(default_field::<i32>(page_offset, "maxLimit")?),
+            results_path: Some(results_path),
+            error_on_path_not_found: None,
+        })
     } else if let Some(offset) = source.get("offset") {
-        let mut common_offset = service::pagination::Offset::new();
-
-        common_offset.offsetParam = default_field(offset, "offsetParam")?;
-        common_offset.limitParam = default_field(offset, "limitParam")?;
-        common_offset.maxLimit =
-            protobuf::MessageField::some(default_field::<i32>(offset, "maxLimit")?.into());
-        common_offset.resultsPath = protobuf::MessageField::some(results_path);
-
-        sink.set_offset(common_offset);
+        service::Pagination::Offset(service::pagination::Offset {
+            offset_param: default_field(offset, "offsetParam")?,
+            limit_param: default_field(offset, "limitParam")?,
+            max_limit: Some(default_field::<i32>(offset, "maxLimit")?),
+            results_path: Some(results_path),
+            error_on_path_not_found: None,
+        })
     } else if let Some(next_url) = source.get("nextUrl") {
-        let mut common_next_url = service::pagination::NextUrl::new();
+        let next_url_path =
+            service::pagination::ExtendedPath::JmesPath(default_field(next_url, "nextUrlPath")?);
 
-        let mut next_url_path = service::pagination::ExtendedPath::new();
-        next_url_path.set_jmesPath(default_field(next_url, "nextUrlPath")?);
-
-        common_next_url.nextUrlPath = protobuf::MessageField::some(next_url_path);
-        common_next_url.limitParam = default_field(next_url, "limitParam")?;
-        common_next_url.maxLimit =
-            protobuf::MessageField::some(default_field::<i32>(next_url, "maxLimit")?.into());
-        common_next_url.resultsPath = protobuf::MessageField::some(results_path);
-
-        sink.set_nextUrl(common_next_url);
+        service::Pagination::NextUrl(service::pagination::NextUrl {
+            next_url_path: Some(next_url_path),
+            limit_param: default_field(next_url, "limitParam")?,
+            max_limit: Some(default_field::<i32>(next_url, "maxLimit")?),
+            results_path: Some(results_path),
+            error_on_path_not_found: None,
+        })
     } else if let Some(cursor) = source.get("cursor") {
-        let mut common_cursor = service::pagination::MultiCursor::new();
+        let cursor_path =
+            service::pagination::ExtendedPath::JmesPath(default_field(cursor, "cursorPath")?);
 
-        let mut cursor_path = service::pagination::ExtendedPath::new();
-        cursor_path.set_jmesPath(default_field(cursor, "cursorPath")?);
-
-        common_cursor.cursorsPath = vec![cursor_path];
-        common_cursor.cursorsParam = vec![default_field::<String>(cursor, "cursorParam")?];
-        common_cursor.limitParam = default_field(cursor, "limitParam")?;
-        common_cursor.maxLimit =
-            protobuf::MessageField::some(default_field::<i32>(cursor, "maxLimit")?.into());
-        common_cursor.resultsPath = protobuf::MessageField::some(results_path);
-
-        sink.set_multiCursor(common_cursor);
+        service::Pagination::MultiCursor(service::pagination::MultiCursor {
+            cursors_path: vec![cursor_path],
+            cursors_param: vec![default_field::<String>(cursor, "cursorParam")?],
+            limit_param: default_field(cursor, "limitParam")?,
+            max_limit: Some(default_field::<i32>(cursor, "maxLimit")?),
+            results_path: Some(results_path),
+            error_on_path_not_found: None,
+        })
     } else {
-        let mut common_unpaginaged = service::pagination::Unpaginated::new();
-        common_unpaginaged.resultsPath = protobuf::MessageField::some(results_path);
-        sink.set_unpaginated(common_unpaginaged);
-    }
+        service::Pagination::Unpaginated(service::pagination::Unpaginated {
+            results_path: Some(results_path),
+            error_on_path_not_found: None,
+        })
+    };
 
-    Ok(())
+    Ok(pagination)
 }
 
 /// Resolves `source` (possibly a `$ref`) and converts its location
 /// (`header`/`query`/`path`/`cookie`), name, requiredness, description,
 /// and schema into `sink`. An unrecognized location becomes
-/// [`IN_TYPE_NONE`](service::parameter::InType::IN_TYPE_NONE) rather than
-/// erroring.
+/// [`None`](service::parameter::InType::None) rather than erroring.
 fn handle_parameter<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::Parameter,
@@ -290,13 +279,13 @@ fn handle_parameter<R: io::Read>(
 
     let in_ = required_field::<String>(source, "in")?;
     let in_ = match in_.as_str() {
-        "header" => service::parameter::InType::HEADER,
-        "query" => service::parameter::InType::QUERY,
-        "path" => service::parameter::InType::PATH,
-        "cookie" => service::parameter::InType::COOKIE,
-        _ => service::parameter::InType::IN_TYPE_NONE,
+        "header" => service::parameter::InType::Header,
+        "query" => service::parameter::InType::Query,
+        "path" => service::parameter::InType::Path,
+        "cookie" => service::parameter::InType::Cookie,
+        _ => service::parameter::InType::None,
     };
-    sink.in_ = in_.into();
+    sink.r#in = in_;
 
     sink.name = required_field(source, "name")?;
     sink.required = default_field(source, "required")?;
@@ -306,9 +295,9 @@ fn handle_parameter<R: io::Read>(
     }
 
     if let Some(schema) = source.get("schema") {
-        let mut common_schema = service::Schema::new();
+        let mut common_schema = service::Schema::default();
         handle_schema(schema, &mut common_schema, root, fetcher, cache, schemas)?;
-        sink.schema = protobuf::MessageField::some(common_schema);
+        sink.schema = Some(common_schema);
     }
 
     Ok(())
@@ -333,17 +322,17 @@ fn handle_request_body<R: io::Read>(
 
     let content: HashMap<String, serde_json::Value> = default_field(source, "content")?;
     for (key, value) in &content {
-        let mut common_media_type = service::MediaType::new();
+        let mut common_media_type = service::MediaType::default();
         handle_media_type(value, &mut common_media_type, root, fetcher, cache, schemas)?;
-        sink.content.insert(key.to_string(), common_media_type);
+        sink.content.insert(key.clone(), common_media_type);
     }
 
     Ok(())
 }
 
 /// Resolves `source` (possibly a `$ref`) and converts its per-MIME-type
-/// content into `sink`. Response headers aren't represented in the
-/// protobuf schema, so they're not converted.
+/// content into `sink`. Response headers aren't represented in the schema,
+/// so they're not converted.
 fn handle_response<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::ApiResponse,
@@ -357,12 +346,12 @@ fn handle_response<R: io::Read>(
 
     let content: HashMap<String, serde_json::Value> = default_field(source, "content")?;
     for (key, value) in &content {
-        let mut common_media_type = service::MediaType::new();
+        let mut common_media_type = service::MediaType::default();
         handle_media_type(value, &mut common_media_type, root, fetcher, cache, schemas)?;
-        sink.content.insert(key.to_string(), common_media_type);
+        sink.content.insert(key.clone(), common_media_type);
     }
 
-    // NOTE: Response Headers aren't included in the protobuf
+    // NOTE: Response Headers aren't included in the schema
 
     Ok(())
 }
@@ -377,9 +366,9 @@ fn handle_media_type<R: io::Read>(
     schemas: &mut HashMap<String, service::Schema>,
 ) -> error::Result<()> {
     if let Some(schema) = source.get("schema") {
-        let mut common_schema = service::Schema::new();
+        let mut common_schema = service::Schema::default();
         handle_schema(schema, &mut common_schema, root, fetcher, cache, schemas)?;
-        sink.schema = protobuf::MessageField::some(common_schema);
+        sink.schema = Some(common_schema);
     }
 
     Ok(())
@@ -390,7 +379,8 @@ fn handle_media_type<R: io::Read>(
 /// sets `sink` to a `$ref` pointer instead of inlining it. Otherwise
 /// converts `source`'s recognized `type` (string/boolean/integer/number,
 /// recursing into array items or object properties) or, absent a `type`,
-/// its `oneOf`/`anyOf`/`allOf` composition (recursing into each branch).
+/// its `oneOf`/`anyOf`/`allOf` composition (recursing into each branch), or
+/// - absent both - leaves `sink` as an empty `{}` schema.
 fn handle_schema<R: io::Read>(
     source: &serde_json::Value,
     sink: &mut service::Schema,
@@ -401,17 +391,20 @@ fn handle_schema<R: io::Read>(
 ) -> error::Result<()> {
     let reference = handle_reference(source, root, fetcher, cache, &mut HashSet::new());
     if let Err(error::ServiceLoader::CyclicalReference(key)) = reference {
-        sink.set_ref(key);
+        sink.value = Some(service::SchemaValue::Ref(key));
         return Ok(());
     }
     let reference = reference?;
 
     if let Some((key, source)) = reference {
-        sink.set_ref(key.clone());
+        sink.value = Some(service::SchemaValue::Ref(key.clone()));
 
         if !schemas.contains_key(&key) {
-            schemas.insert(key.clone(), service::Schema::new());
-            let mut ref_type = service::Schema::new();
+            // Placeholder to break a reference cycle - its value is never
+            // read before being overwritten below, only its presence as a
+            // key is checked.
+            schemas.insert(key.clone(), service::Schema::default());
+            let mut ref_type = service::Schema::default();
             handle_schema(&source, &mut ref_type, root, fetcher, cache, schemas)?;
             schemas.insert(key, ref_type);
         }
@@ -422,36 +415,44 @@ fn handle_schema<R: io::Read>(
 
     if let Some(type_) = type_ {
         match type_.as_str() {
-            "string" => sink.set_schemaObject(service::SchemaObject {
-                type_: service::schema_object::SchemaType::STRING.into(),
-                ..Default::default()
-            }),
-            "boolean" => sink.set_schemaObject(service::SchemaObject {
-                type_: service::schema_object::SchemaType::BOOLEAN.into(),
-                ..Default::default()
-            }),
-            "integer" => sink.set_schemaObject(service::SchemaObject {
-                type_: service::schema_object::SchemaType::INTEGER.into(),
-                ..Default::default()
-            }),
-            "number" => sink.set_schemaObject(service::SchemaObject {
-                type_: service::schema_object::SchemaType::NUMBER.into(),
-                ..Default::default()
-            }),
+            "string" => {
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::String,
+                    ..Default::default()
+                }));
+            }
+            "boolean" => {
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::Boolean,
+                    ..Default::default()
+                }));
+            }
+            "integer" => {
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::Integer,
+                    ..Default::default()
+                }));
+            }
+            "number" => {
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::Number,
+                    ..Default::default()
+                }));
+            }
             "array" => {
                 let items = if let Some(items) = source.get("items") {
-                    let mut common_items = service::Schema::new();
+                    let mut common_items = service::Schema::default();
                     handle_schema(items, &mut common_items, root, fetcher, cache, schemas)?;
-                    protobuf::MessageField::some(common_items)
+                    Some(Box::new(common_items))
                 } else {
-                    protobuf::MessageField::none()
+                    None
                 };
 
-                sink.set_schemaObject(service::SchemaObject {
-                    type_: service::schema_object::SchemaType::ARRAY.into(),
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::Array,
                     items,
                     ..Default::default()
-                });
+                }));
             }
             "object" => {
                 let properties: HashMap<String, serde_json::Value> =
@@ -460,43 +461,40 @@ fn handle_schema<R: io::Read>(
                 let properties: error::Result<HashMap<String, service::Schema>> = properties
                     .iter()
                     .map(|(key, value)| {
-                        let mut common_property = service::Schema::new();
+                        let mut common_property = service::Schema::default();
                         handle_schema(value, &mut common_property, root, fetcher, cache, schemas)?;
-                        Ok((key.to_string(), common_property))
+                        Ok((key.clone(), common_property))
                     })
                     .collect();
                 let properties = properties?;
 
                 let required: Vec<String> = default_field(source, "required")?;
-                sink.set_schemaObject(service::SchemaObject {
-                    type_: service::schema_object::SchemaType::OBJECT.into(),
+                sink.value = Some(service::SchemaValue::SchemaObject(service::SchemaObject {
+                    r#type: service::schema_object::SchemaType::Object,
                     properties,
                     required,
                     ..Default::default()
-                });
+                }));
             }
             _ => {}
         }
     } else {
         if let Some(schema) = resolve_schema_list(source, "oneOf", root, fetcher, cache, schemas)? {
-            sink.set_oneOf(service::ComposedSchema {
+            sink.value = Some(service::SchemaValue::OneOf(service::ComposedSchema {
                 schema,
-                ..Default::default()
-            });
+            }));
         }
 
         if let Some(schema) = resolve_schema_list(source, "anyOf", root, fetcher, cache, schemas)? {
-            sink.set_anyOf(service::ComposedSchema {
+            sink.value = Some(service::SchemaValue::AnyOf(service::ComposedSchema {
                 schema,
-                ..Default::default()
-            });
+            }));
         }
 
         if let Some(schema) = resolve_schema_list(source, "allOf", root, fetcher, cache, schemas)? {
-            sink.set_allOf(service::ComposedSchema {
+            sink.value = Some(service::SchemaValue::AllOf(service::ComposedSchema {
                 schema,
-                ..Default::default()
-            });
+            }));
         }
     }
 
@@ -522,7 +520,7 @@ fn resolve_schema_list<R: io::Read>(
     values
         .iter()
         .map(|value| {
-            let mut common_schema = service::Schema::new();
+            let mut common_schema = service::Schema::default();
             handle_schema(value, &mut common_schema, root, fetcher, cache, schemas)?;
             Ok(common_schema)
         })
@@ -580,7 +578,7 @@ mod test {
 
         assert_eq!("example description", root.description);
         assert_eq!("Example API", root.title);
-        assert_eq!("https://example.com", root.basePath());
+        assert_eq!(Some("https://example.com".to_owned()), root.base_path);
 
         Ok(())
     }
@@ -593,10 +591,7 @@ mod test {
         let root = handle(&fetcher, "main")?;
 
         let operation = root.operations.get("say_hello").unwrap();
-        assert_eq!(
-            service::operation::HttpMethodType::GET,
-            operation.method.unwrap()
-        );
+        assert_eq!(service::operation::HttpMethodType::Get, operation.method);
         assert_eq!("/hello", operation.path);
 
         Ok(())
@@ -613,7 +608,7 @@ mod test {
         assert_eq!(1, op.parameter.len());
         let param = &op.parameter[0];
 
-        assert_eq!(service::parameter::InType::HEADER, param.in_.unwrap());
+        assert_eq!(service::parameter::InType::Header, param.r#in);
         assert_eq!("Version", param.name);
         assert!(!param.required);
 
@@ -631,7 +626,7 @@ mod test {
         assert_eq!(1, op.parameter.len());
         let param = &op.parameter[0];
 
-        assert_eq!(service::parameter::InType::HEADER, param.in_.unwrap());
+        assert_eq!(service::parameter::InType::Header, param.r#in);
         assert_eq!("Version", param.name);
         assert!(!param.required);
 
@@ -659,7 +654,7 @@ mod test {
 
         let path = root.operations.get("say_hello").unwrap();
 
-        let req_body = path.requestBody.as_ref().unwrap();
+        let req_body = path.request_body.as_ref().unwrap();
         assert_eq!("Say your thing", req_body.description);
         assert!(!req_body.required);
         assert_eq!(1, req_body.content.len());
@@ -676,7 +671,7 @@ mod test {
 
         let path = root.operations.get("say_hello").unwrap();
 
-        let req_body = path.requestBody.as_ref().unwrap();
+        let req_body = path.request_body.as_ref().unwrap();
         assert_eq!("Say your thing", req_body.description);
         assert!(!req_body.required);
         assert_eq!(1, req_body.content.len());
@@ -693,7 +688,13 @@ mod test {
 
         let op = root.operations.get("say_hello").unwrap();
 
-        let ok_response = op.apiResponses.apiResponses.get("200").unwrap();
+        let ok_response = op
+            .api_responses
+            .as_ref()
+            .unwrap()
+            .api_responses
+            .get("200")
+            .unwrap();
         assert_eq!(1, ok_response.content.len());
 
         Ok(())
@@ -708,7 +709,13 @@ mod test {
 
         let op = root.operations.get("say_hello").unwrap();
 
-        let ok_response = op.apiResponses.apiResponses.get("200").unwrap();
+        let ok_response = op
+            .api_responses
+            .as_ref()
+            .unwrap()
+            .api_responses
+            .get("200")
+            .unwrap();
         assert_eq!(1, ok_response.content.len());
 
         Ok(())
@@ -723,13 +730,20 @@ mod test {
 
         let op = root.operations.get("say_hello").unwrap();
 
-        let page = &op.pagination;
-        assert!(page.has_offset());
+        let page = op.pagination.as_ref().unwrap();
+        let service::Pagination::Offset(page) = page else {
+            panic!("expected an Offset pagination strategy, got {page:?}");
+        };
 
-        let page = page.offset();
-
-        assert_eq!(100, page.maxLimit.value);
-        assert_eq!("$response.body#/", page.resultsPath.jmesPath());
+        assert_eq!(Some(100), page.max_limit);
+        let Some(service::pagination::ExtendedPath::JmesPath(results_path)) = &page.results_path
+        else {
+            panic!(
+                "expected a JmesPath resultsPath, got {:?}",
+                page.results_path
+            );
+        };
+        assert_eq!("$response.body#/", results_path);
 
         Ok(())
     }
@@ -746,12 +760,11 @@ mod test {
         assert_eq!(1, op.parameter.len());
         let param = &op.parameter[0];
 
-        let schema = &param.schema;
-        let schema = schema.schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            schema.type_.unwrap()
-        );
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, schema.r#type);
 
         Ok(())
     }
@@ -767,19 +780,18 @@ mod test {
 
         let param = &op.parameter[0];
 
-        let schema = &param.schema;
-        let schema = schema.schemaObject();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
 
-        assert_eq!(
-            service::schema_object::SchemaType::ARRAY,
-            schema.type_.unwrap()
-        );
+        assert_eq!(service::schema_object::SchemaType::Array, schema.r#type);
 
-        let items = schema.items.schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            items.type_.unwrap()
-        );
+        let items = schema.items.as_ref().unwrap();
+        let Some(service::SchemaValue::SchemaObject(items)) = &items.value else {
+            panic!("expected a SchemaObject, got {items:?}");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, items.r#type);
 
         Ok(())
     }
@@ -795,31 +807,30 @@ mod test {
 
         let param = &op.parameter[0];
 
-        let schema = &param.schema;
-        let schema = schema.schemaObject();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
 
-        assert_eq!(
-            service::schema_object::SchemaType::OBJECT,
-            schema.type_.unwrap()
-        );
+        assert_eq!(service::schema_object::SchemaType::Object, schema.r#type);
 
         let props = &schema.properties;
-        assert_eq!(
-            service::schema_object::SchemaType::NUMBER,
-            props.get("foo").unwrap().schemaObject().type_.unwrap()
-        );
+        let Some(service::SchemaValue::SchemaObject(foo)) = &props.get("foo").unwrap().value else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::Number, foo.r#type);
 
-        let bar = props.get("bar").unwrap().schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::OBJECT,
-            bar.type_.unwrap()
-        );
+        let Some(service::SchemaValue::SchemaObject(bar)) = &props.get("bar").unwrap().value else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::Object, bar.r#type);
 
-        let baz = bar.properties.get("baz").unwrap().schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            baz.type_.unwrap()
-        );
+        let Some(service::SchemaValue::SchemaObject(baz)) =
+            &bar.properties.get("baz").unwrap().value
+        else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, baz.r#type);
 
         Ok(())
     }
@@ -835,18 +846,20 @@ mod test {
 
         let param = &op.parameter[0];
 
-        let schema = &param.schema;
-        let schema = schema.oneOf();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::OneOf(schema)) = &schema.value else {
+            panic!("expected a OneOf schema, got {schema:?}");
+        };
         let schema = &schema.schema;
 
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            schema[0].schemaObject().type_.unwrap()
-        );
-        assert_eq!(
-            service::schema_object::SchemaType::NUMBER,
-            schema[1].schemaObject().type_.unwrap()
-        );
+        let Some(service::SchemaValue::SchemaObject(first)) = &schema[0].value else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, first.r#type);
+        let Some(service::SchemaValue::SchemaObject(second)) = &schema[1].value else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::Number, second.r#type);
 
         Ok(())
     }
@@ -948,22 +961,21 @@ mod test {
         let op = root.operations.get("say_hello").unwrap();
 
         let param = &op.parameter[0];
-        assert_eq!(service::parameter::InType::HEADER, param.in_.unwrap());
+        assert_eq!(service::parameter::InType::Header, param.r#in);
         assert_eq!("Version", param.name);
         assert!(!param.required);
 
-        let schema = param.schema.ref_();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::Ref(schema)) = &schema.value else {
+            panic!("expected a Ref, got {schema:?}");
+        };
         assert_eq!("#/components/schemas/Version", schema);
 
-        let schema = root
-            .schemas
-            .get("#/components/schemas/Version")
-            .unwrap()
-            .schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            schema.type_.unwrap()
-        );
+        let schema = root.schemas.get("#/components/schemas/Version").unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, schema.r#type);
 
         Ok(())
     }
@@ -977,25 +989,33 @@ mod test {
         let op = root.operations.get("say_hello").unwrap();
 
         let param = &op.parameter[0];
-        assert_eq!(service::parameter::InType::HEADER, param.in_.unwrap());
+        assert_eq!(service::parameter::InType::Header, param.r#in);
         assert_eq!("Version", param.name);
         assert!(!param.required);
 
-        let schema = param.schema.ref_();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::Ref(schema)) = &schema.value else {
+            panic!("expected a Ref, got {schema:?}");
+        };
         assert_eq!("#/components/schemas/OtherVersion", schema);
 
         let schema = root
             .schemas
             .get("#/components/schemas/OtherVersion")
-            .unwrap()
-            .schemaObject();
+            .unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema_obj)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
         assert_eq!(
-            service::schema_object::SchemaType::OBJECT,
-            schema.type_.unwrap()
+            service::schema_object::SchemaType::Object,
+            schema_obj.r#type
         );
 
-        let schema = schema.properties.get("foo").unwrap().ref_();
-        assert_eq!("#/components/schemas/OtherVersion", schema);
+        let foo = schema_obj.properties.get("foo").unwrap();
+        let Some(service::SchemaValue::Ref(foo)) = &foo.value else {
+            panic!("expected a Ref, got {foo:?}");
+        };
+        assert_eq!("#/components/schemas/OtherVersion", foo);
 
         Ok(())
     }
@@ -1009,30 +1029,30 @@ mod test {
         let op = root.operations.get("say_hello").unwrap();
 
         let param = &op.parameter[0];
-        assert_eq!(service::parameter::InType::HEADER, param.in_.unwrap());
+        assert_eq!(service::parameter::InType::Header, param.r#in);
         assert_eq!("Version", param.name);
         assert!(!param.required);
 
-        let schemas = param.schema.oneOf();
+        let schema = param.schema.as_ref().unwrap();
+        let Some(service::SchemaValue::OneOf(schemas)) = &schema.value else {
+            panic!("expected a OneOf, got {schema:?}");
+        };
 
-        let schema = schemas.schema[0].schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::STRING,
-            schema.type_.unwrap()
-        );
+        let Some(service::SchemaValue::SchemaObject(first)) = &schemas.schema[0].value else {
+            panic!("expected a SchemaObject");
+        };
+        assert_eq!(service::schema_object::SchemaType::String, first.r#type);
 
-        let schema = schemas.schema[1].ref_();
-        assert_eq!("#/components/schemas/Number", schema);
+        let Some(service::SchemaValue::Ref(second)) = &schemas.schema[1].value else {
+            panic!("expected a Ref");
+        };
+        assert_eq!("#/components/schemas/Number", second);
 
-        let schema = root
-            .schemas
-            .get("#/components/schemas/Number")
-            .unwrap()
-            .schemaObject();
-        assert_eq!(
-            service::schema_object::SchemaType::NUMBER,
-            schema.type_.unwrap()
-        );
+        let schema = root.schemas.get("#/components/schemas/Number").unwrap();
+        let Some(service::SchemaValue::SchemaObject(schema)) = &schema.value else {
+            panic!("expected a SchemaObject, got {schema:?}");
+        };
+        assert_eq!(service::schema_object::SchemaType::Number, schema.r#type);
 
         Ok(())
     }

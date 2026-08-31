@@ -2,7 +2,7 @@
 
 use std::{io, num::TryFromIntError};
 
-use execution_engine::error::ExecutionEngine;
+use core_entities::ports::engine::error::ExecutionEngine;
 use thiserror::Error;
 
 /// Failure modes of [`APICaller::run`](crate::APICaller).

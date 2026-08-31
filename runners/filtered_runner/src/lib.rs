@@ -1,5 +1,5 @@
 //! A [`FilteredRunner`] adapter that calls another already-registered
-//! operation through the [`execution_engine`] and narrows its result down to
+//! operation through an [`EngineService`] and narrows its result down to
 //! a specific set of selected output fields.
 
 pub mod error;
@@ -9,7 +9,7 @@ use std::{rc::Rc, sync::Arc};
 use common_data_structures::log_writer::LogWriter;
 use lazy_static::lazy_static;
 
-use execution_engine::services::FilteredRunner;
+use core_entities::ports::engine::{self, EngineInputContext, EngineService, FilteredRunner};
 use regex::Regex;
 
 lazy_static! {
@@ -19,14 +19,14 @@ lazy_static! {
 
 /// Resolves an [`APIWrappedService`](core_entities::service::APIWrappedService)
 /// manifest by invoking the wrapped operation on the shared
-/// [`execution_engine::Engine`] and picking out the manifest's selected
+/// [`EngineService`] and picking out the manifest's selected
 /// output fields.
 pub struct APIWrapper {
     /// Currently unused; kept for parity with the other runners' constructors.
     _log: LogWriter,
 
     /// The engine used to invoke the wrapped operation.
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
 }
 
 impl APIWrapper {
@@ -34,13 +34,13 @@ impl APIWrapper {
     /// `engine`.
     #[must_use]
     #[inline]
-    pub fn new(log: LogWriter, engine: Arc<dyn execution_engine::EngineService>) -> Self {
+    pub fn new(log: LogWriter, engine: Arc<dyn EngineService>) -> Self {
         Self { _log: log, engine }
     }
 
     /// Builds the wrapped operation's input from `manifest.inputs` and
     /// `params`, runs it through [`engine`](APIWrapper::new), then extracts
-    /// `manifest.outputSelectors` (`JMESPath` expressions) from the result
+    /// `manifest.output_selectors` (`JMESPath` expressions) from the result
     /// into the returned object.
     #[inline]
     fn run_internal(
@@ -49,29 +49,26 @@ impl APIWrapper {
         _operation_name: &str,
         manifest: &core_entities::service::APIWrappedService,
         params: &serde_json::Value,
-        ctx: &execution_engine::services::EngineInputContext,
+        ctx: &EngineInputContext,
     ) -> error::Result<serde_json::Value> {
-        let app = extract_connector_id(&manifest.connectorId)?;
-        let operation = manifest.connectorOperation.as_str();
+        let app = extract_connector_id(&manifest.connector_id)?;
+        let operation = manifest.connector_operation.as_str();
 
         let id = format!("{app}.{operation}");
 
         let mut input = serde_json::Value::Object(serde_json::Map::new());
         for input_param in &manifest.inputs {
-            if let Some(param) = &input_param.param.0 {
+            if let Some(param) = &input_param.param {
                 let param = &param.name;
                 if let Some(param) = params.get(param) {
-                    let path: Vec<_> = input_param.apiParamName.split('.').collect();
+                    let path: Vec<_> = input_param.api_param_name.split('.').collect();
                     traverse_map(&mut input, &path, param.clone())?;
                 }
             }
         }
 
-        let context = execution_engine::services::EngineInputContext::new(
-            Some(name.to_owned()),
-            ctx.execution_id.clone(),
-            true,
-        );
+        let context =
+            EngineInputContext::new(Some(name.to_owned()), ctx.execution_id.clone(), true);
 
         let result = self
             .engine
@@ -81,8 +78,8 @@ impl APIWrapper {
 
         let mut output = serde_json::Map::new();
 
-        for output_param in &manifest.outputSelectors {
-            let expr = jmespath::compile(&output_param.jmesPathSelector)?;
+        for output_param in &manifest.output_selectors {
+            let expr = jmespath::compile(&output_param.jmes_path_selector)?;
             let value = expr.search(Rc::clone(&result))?;
             let value = serde_json::to_string(&value)?;
             let value = serde_json::from_str(&value)?;
@@ -101,8 +98,8 @@ impl FilteredRunner for APIWrapper {
         operation_name: &str,
         manifest: &core_entities::service::APIWrappedService,
         params: serde_json::Value,
-        ctx: &execution_engine::services::EngineInputContext,
-    ) -> execution_engine::error::Result<serde_json::Value> {
+        ctx: &EngineInputContext,
+    ) -> engine::error::Result<serde_json::Value> {
         let result = self.run_internal(name, operation_name, manifest, &params, ctx)?;
 
         Ok(result)

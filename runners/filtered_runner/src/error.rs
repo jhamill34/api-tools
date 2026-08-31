@@ -1,7 +1,7 @@
 //! Errors produced while resolving an [`APIWrapper`](crate::APIWrapper)
 //! call.
 
-use execution_engine::error::ExecutionEngine;
+use core_entities::ports::engine::error::ExecutionEngine;
 use thiserror::Error;
 
 /// Failure modes of [`APIWrapper::run`](crate::APIWrapper).

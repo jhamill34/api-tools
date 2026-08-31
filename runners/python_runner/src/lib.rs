@@ -10,7 +10,7 @@ pub mod error;
 use std::sync::Arc;
 
 use common_data_structures::log_writer::LogWriter;
-use execution_engine::services::CodeRunner;
+use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyString};
@@ -34,10 +34,10 @@ where
 /// A [`CodeRunner`] that wraps and executes a Python operation body in an
 /// embedded `CPython` interpreter, installing `api`/`workflow`/`action`/
 /// `task` bindings into the script's module namespace so it can call back
-/// into the shared [`execution_engine::Engine`].
+/// into the shared [`EngineService`].
 pub struct PyActionRunner {
     /// The engine used to resolve calls made from the script's bindings.
-    engine: Arc<dyn execution_engine::EngineService>,
+    engine: Arc<dyn EngineService>,
 
     /// Where the script's bindings log activity.
     loggers: LogWriter,
@@ -48,7 +48,7 @@ impl PyActionRunner {
     /// `engine` and logs them to `loggers`.
     #[inline]
     #[must_use]
-    pub fn new(loggers: LogWriter, engine: Arc<dyn execution_engine::EngineService>) -> Self {
+    pub fn new(loggers: LogWriter, engine: Arc<dyn EngineService>) -> Self {
         Self { engine, loggers }
     }
 
@@ -65,7 +65,7 @@ impl PyActionRunner {
         operation_name: &str,
         source_code: &str,
         params: Value,
-        ctx: &execution_engine::services::EngineInputContext,
+        ctx: &EngineInputContext,
     ) -> error::Result<Value> {
         let function_name = FUNCTION_REGEX
             .as_ref()
@@ -85,7 +85,7 @@ impl PyActionRunner {
             let api = bindings::APIBindingWraper {
                 name: format!("{name}.{operation_name}"),
                 engine: Arc::clone(&self.engine),
-                ctx: execution_engine::services::EngineInputContext::new(
+                ctx: EngineInputContext::new(
                     Some(name.to_owned()),
                     ctx.execution_id.clone(),
                     false,
@@ -111,11 +111,7 @@ impl PyActionRunner {
             let task = bindings::TaskBinding {
                 name: format!("{name}.{operation_name}"),
                 engine: Arc::clone(&self.engine),
-                ctx: execution_engine::services::EngineInputContext::new(
-                    Some(name.to_owned()),
-                    ctx.execution_id.clone(),
-                    true,
-                ),
+                ctx: EngineInputContext::new(Some(name.to_owned()), ctx.execution_id.clone(), true),
                 logger: self.loggers.clone(),
             };
 
@@ -166,8 +162,8 @@ impl CodeRunner for PyActionRunner {
         operation_name: &str,
         source_code: &str,
         params: Value,
-        ctx: &execution_engine::services::EngineInputContext,
-    ) -> execution_engine::error::Result<Value> {
+        ctx: &EngineInputContext,
+    ) -> engine::error::Result<Value> {
         let result = self.run_internal(name, operation_name, source_code, params, ctx)?;
         Ok(result)
     }

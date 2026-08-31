@@ -1,16 +1,15 @@
-//! An in-memory storage adapter that backs both [`service_loader`]'s
-//! [`LoaderOutput`] (persisting loaded services/credentials) and
-//! [`execution_engine`]'s [`EngineLookup`] (resolving them again at
-//! execution time).
+//! An in-memory storage adapter that backs both a service loader's
+//! [`LoaderOutput`] (persisting loaded services/credentials) and an
+//! execution engine's [`EngineLookup`] (resolving them again at execution
+//! time).
 
 pub mod error;
 pub mod repo;
 
+use core_entities::ports::{engine::EngineLookup, loader::LoaderOutput};
 use core_entities::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
-use execution_engine::services::EngineLookup;
 use repo::Repository;
-use service_loader::LoaderOutput;
 
 /// Bundles the two [`Repository`] instances a loaded workspace needs: one
 /// for service manifests, one for credentials. Implements both
@@ -45,7 +44,7 @@ impl LoaderOutput for OperationRepos {
         &mut self,
         id: &str,
         service: VersionedServiceTree,
-    ) -> service_loader::error::Result<()> {
+    ) -> core_entities::ports::loader::Result<()> {
         self.services.save(id.to_owned(), service)?;
         Ok(())
     }
@@ -55,7 +54,7 @@ impl LoaderOutput for OperationRepos {
         &mut self,
         id: &str,
         credentials: Authentication,
-    ) -> service_loader::error::Result<()> {
+    ) -> core_entities::ports::loader::Result<()> {
         self.credentials.save(id.to_owned(), credentials)?;
         Ok(())
     }
