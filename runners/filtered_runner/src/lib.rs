@@ -17,7 +17,7 @@ lazy_static! {
         Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
 }
 
-/// Resolves an [`APIWrappedService`](core_entities::service::APIWrappedService)
+/// Resolves an [`APIWrappedService`](core_entities::entity::APIWrappedService)
 /// manifest by invoking the wrapped operation on the shared
 /// [`execution_engine::Engine`] and picking out the manifest's selected
 /// output fields.
@@ -40,28 +40,28 @@ impl APIWrapper {
 
     /// Builds the wrapped operation's input from `manifest.inputs` and
     /// `params`, runs it through [`engine`](APIWrapper::new), then extracts
-    /// `manifest.outputSelectors` (`JMESPath` expressions) from the result
+    /// `manifest.output_selectors` (`JMESPath` expressions) from the result
     /// into the returned object.
     #[inline]
     fn run_internal(
         &self,
         name: &str,
         _operation_name: &str,
-        manifest: &core_entities::service::APIWrappedService,
+        manifest: &core_entities::entity::APIWrappedService,
         params: &serde_json::Value,
         ctx: &execution_engine::services::EngineInputContext,
     ) -> error::Result<serde_json::Value> {
-        let app = extract_connector_id(&manifest.connectorId)?;
-        let operation = manifest.connectorOperation.as_str();
+        let app = extract_connector_id(&manifest.connector_id)?;
+        let operation = manifest.connector_operation.as_str();
 
         let id = format!("{app}.{operation}");
 
         let mut input = serde_json::Value::Object(serde_json::Map::new());
         for input_param in &manifest.inputs {
-            if let Some(param) = &input_param.param.0 {
+            if let Some(param) = &input_param.param {
                 let param = &param.name;
                 if let Some(param) = params.get(param) {
-                    let path: Vec<_> = input_param.apiParamName.split('.').collect();
+                    let path: Vec<_> = input_param.api_param_name.split('.').collect();
                     traverse_map(&mut input, &path, param.clone())?;
                 }
             }
@@ -81,8 +81,8 @@ impl APIWrapper {
 
         let mut output = serde_json::Map::new();
 
-        for output_param in &manifest.outputSelectors {
-            let expr = jmespath::compile(&output_param.jmesPathSelector)?;
+        for output_param in &manifest.output_selectors {
+            let expr = jmespath::compile(&output_param.jmes_path_selector)?;
             let value = expr.search(Rc::clone(&result))?;
             let value = serde_json::to_string(&value)?;
             let value = serde_json::from_str(&value)?;
@@ -99,7 +99,7 @@ impl FilteredRunner for APIWrapper {
         &self,
         name: &str,
         operation_name: &str,
-        manifest: &core_entities::service::APIWrappedService,
+        manifest: &core_entities::entity::APIWrappedService,
         params: serde_json::Value,
         ctx: &execution_engine::services::EngineInputContext,
     ) -> execution_engine::error::Result<serde_json::Value> {
