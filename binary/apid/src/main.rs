@@ -77,11 +77,11 @@ fn construct_execution_engine(
             workflow_logger.clone(),
         );
 
+        // `pool_size` has no config field yet, so this gets
+        // `workflow_runner`'s own default pool size for now - see #103.
         #[cfg(feature = "workflow")]
-        let workflow_adapter = workflow_runner::WorkflowAdapter::spawn(
-            Arc::clone(&weak_handle),
-            workflow_logger.clone(),
-        );
+        let workflow_adapter =
+            workflow_runner::WorkflowAdapter::spawn(&weak_handle, &workflow_logger, None);
 
         #[cfg(feature = "workflow")]
         let async_connector = Arc::new(api_caller::AsyncAPICaller::new(api_logger));

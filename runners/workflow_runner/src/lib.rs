@@ -25,6 +25,17 @@
 //! `Lua` - it only sends a request and awaits the reply - so its future
 //! really is `Send`, satisfying [`WorkflowRunner`]'s bound.
 //!
+//! [`WorkflowAdapter::spawn`] stands up a small *pool* of these dedicated
+//! threads (see issue #103), not just one: a single shared thread would
+//! mean one workflow doing a lot of synchronous, non-yielding Lua work
+//! (e.g. many `api.step`-registered bodies coming ready in one burst - see
+//! #102) could delay every other concurrent workflow request in the
+//! process, since they'd all be cooperatively multitasking on the same OS
+//! thread. Incoming requests are assigned to a pool thread round-robin
+//! (see [`WorkflowAdapter::run`]); a more load-aware strategy (e.g. by each
+//! thread's current pending count) is a possible future refinement, not
+//! needed for the isolation this pool already provides.
+//!
 //! Every workflow run also gets two host bindings installed fresh per call,
 //! alongside `api.step`/`api.join`:
 //!
@@ -49,7 +60,13 @@
 //!   manifest kind, so a script author's choice between the two bindings
 //!   is explicit rather than silently downgraded.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use core_entities::ports::engine::{
     self, error::ExecutionEngine, DataConnectorBundle, EngineInputContext, EngineService,
@@ -62,6 +79,13 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default number of dedicated workflow-dispatch threads
+/// [`WorkflowAdapter::spawn`] stands up, used unless given an explicit
+/// override. Each thread is a full OS thread with its own single-threaded
+/// runtime, so this is a real resource tradeoff (isolation vs. thread
+/// count), not just a tuning knob - see the module docs.
+const DEFAULT_DISPATCH_POOL_SIZE: usize = 4;
 
 /// `chrono` format string used to timestamp `api.run` log entries -
 /// matches `lua_runner::constants::DATETIME_FORMAT`.
@@ -79,42 +103,67 @@ struct WorkflowRequest {
     responder: oneshot::Sender<engine::error::Result<Value>>,
 }
 
-/// Sends workflow-run requests to a dedicated single-threaded `LocalSet`
-/// where the actual (thread-affine, `!Send`) `mlua`-backed execution
-/// happens - see the module docs for why this indirection exists.
+/// Sends workflow-run requests to one of a small pool of dedicated
+/// single-threaded `LocalSet`s where the actual (thread-affine, `!Send`)
+/// `mlua`-backed execution happens - see the module docs for why this
+/// indirection exists, and why it's a pool rather than a single thread.
 pub struct WorkflowAdapter {
-    sender: mpsc::UnboundedSender<WorkflowRequest>,
+    /// One sender per dispatch thread, indexed by [`Self::next`] modulo
+    /// `senders.len()`. Never empty - [`Self::spawn`] enforces a pool size
+    /// of at least 1.
+    senders: Vec<mpsc::UnboundedSender<WorkflowRequest>>,
+    /// Round-robin cursor into `senders`, advanced with `Relaxed` ordering
+    /// since it's just spreading load, not synchronizing access to
+    /// anything - a race that assigns two requests to the same thread
+    /// (vs. perfectly alternating) is harmless.
+    next: AtomicUsize,
 }
 
 impl WorkflowAdapter {
-    /// Spawns the dedicated workflow-dispatch thread and returns an
-    /// adapter that sends work to it. `engine` is the same
-    /// `Arc<dyn EngineService>` `apid` dispatches every other operation
-    /// through - it's what the `api.run`/`api.call` bindings bridge into.
-    /// The thread runs for the lifetime of the process (detached, not
-    /// joined) - it exits on its own once every [`WorkflowAdapter`]
-    /// clone/reference holding its sender is dropped and the channel
-    /// closes.
+    /// Spawns `pool_size` dedicated workflow-dispatch threads (`None` uses
+    /// [`DEFAULT_DISPATCH_POOL_SIZE`]; a size of `0` is treated as `1`) and
+    /// returns an adapter that round-robins work across them. `engine` is
+    /// the same `Arc<dyn EngineService>` `apid` dispatches every other
+    /// operation through - it's what the `api.run`/`api.call` bindings
+    /// bridge into. Each thread runs for the lifetime of the process
+    /// (detached, not joined) - it exits on its own once every sender
+    /// reaching it is dropped and its channel closes.
     #[must_use]
     pub fn spawn(
-        engine: Arc<dyn EngineService>,
-        logger: common_data_structures::log_writer::LogWriter,
+        engine: &Arc<dyn EngineService>,
+        logger: &common_data_structures::log_writer::LogWriter,
+        pool_size: Option<usize>,
     ) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let pool_size = pool_size.unwrap_or(DEFAULT_DISPATCH_POOL_SIZE).max(1);
 
-        std::thread::Builder::new()
-            .name("workflow-dispatch".into())
-            .spawn(move || run_dispatch_thread(receiver, engine, logger))
-            .expect("failed to spawn the workflow-dispatch thread");
+        let senders = (0..pool_size)
+            .map(|index| {
+                let (sender, receiver) = mpsc::unbounded_channel();
+                let engine = Arc::clone(engine);
+                let logger = logger.clone();
 
-        Self { sender }
+                std::thread::Builder::new()
+                    .name(format!("workflow-dispatch-{index}"))
+                    .spawn(move || run_dispatch_thread(receiver, engine, logger))
+                    .expect("failed to spawn a workflow-dispatch thread");
+
+                sender
+            })
+            .collect();
+
+        Self {
+            senders,
+            next: AtomicUsize::new(0),
+        }
     }
 }
 
-/// The dedicated thread's body: a single-threaded Tokio runtime driving a
-/// [`tokio::task::LocalSet`], so every spawned workflow run can freely
-/// hold `!Send` `mlua` state without ever needing to cross a thread
-/// boundary.
+/// One pool thread's body: a single-threaded Tokio runtime driving a
+/// [`tokio::task::LocalSet`], so every workflow run spawned onto it can
+/// freely hold `!Send` `mlua` state without ever needing to cross a thread
+/// boundary. Requests landing on different pool threads run fully
+/// independently of one another - only requests round-robined onto the
+/// *same* thread cooperatively share it.
 fn run_dispatch_thread(
     mut receiver: mpsc::UnboundedReceiver<WorkflowRequest>,
     engine: Arc<dyn EngineService>,
@@ -321,7 +370,11 @@ impl WorkflowRunner for WorkflowAdapter {
         }
 
         let (tx, rx) = oneshot::channel();
-        self.sender
+        // Relaxed: this is purely spreading load round-robin across the
+        // pool, not synchronizing access to anything - see `Self::next`'s
+        // doc comment.
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.senders.len();
+        self.senders[index]
             .send(WorkflowRequest {
                 service_name: name.to_owned(),
                 execution_id: ctx.execution_id.clone(),
@@ -345,7 +398,7 @@ impl WorkflowRunner for WorkflowAdapter {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{sync::Mutex, time::Instant};
 
     use core_entities::ports::catalog::ServiceCatalog;
     use core_entities::ports::engine::{AsyncDataConnectionRunner, CodeRunner};
@@ -401,7 +454,7 @@ mod tests {
 
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let adapter = WorkflowAdapter::spawn(empty_engine(), logger);
+        let adapter = WorkflowAdapter::spawn(&empty_engine(), &logger, None);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
@@ -431,7 +484,7 @@ mod tests {
 
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let adapter = WorkflowAdapter::spawn(empty_engine(), logger);
+        let adapter = WorkflowAdapter::spawn(&empty_engine(), &logger, None);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
@@ -594,7 +647,7 @@ mod tests {
 
         let manifest = workflow_manifest("return api.call('other.op', { hello = 'world' })");
 
-        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let adapter = WorkflowAdapter::spawn(&engine, &logger, None);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
@@ -635,7 +688,7 @@ mod tests {
                               return { ok = ok }",
         );
 
-        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let adapter = WorkflowAdapter::spawn(&engine, &logger, None);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
@@ -675,7 +728,7 @@ mod tests {
 
         let manifest = workflow_manifest("return api.run('other.op', { hello = 'world' })");
 
-        let adapter = WorkflowAdapter::spawn(Arc::clone(&engine), logger);
+        let adapter = WorkflowAdapter::spawn(&engine, &logger, None);
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
 
         let result = adapter
@@ -703,5 +756,78 @@ mod tests {
              the call already names 'other' explicitly, but proves the bridge is genuinely \
              wired to Engine::run rather than stubbed"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_workflows_on_different_pool_threads_do_not_serialize() {
+        let (logger, _handle) =
+            common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
+        let adapter = Arc::new(WorkflowAdapter::spawn(&empty_engine(), &logger, Some(2)));
+
+        // A real, CPU-bound Lua loop - not I/O (e.g. `tokio::time::sleep`),
+        // which even the *old* single-thread design already interleaved
+        // fine via cooperative multitasking. This is specifically the kind
+        // of non-yielding work that would monopolize a shared dispatch
+        // thread - see the module docs and #103. ~30M iterations reliably
+        // takes several hundred ms (measured empirically, not guessed).
+        let busy_manifest = workflow_manifest(
+            "local sum = 0\n\
+             for i = 1, 30000000 do\n\
+                 sum = sum + i\n\
+             end\n\
+             return sum",
+        );
+        let quick_manifest = workflow_manifest("return 1");
+
+        let busy_adapter = Arc::clone(&adapter);
+        let busy_handle = tokio::spawn(async move {
+            let ctx = EngineInputContext::new(None, "exec-busy".into(), false);
+            busy_adapter
+                .run(
+                    "svc",
+                    "execute",
+                    &busy_manifest,
+                    from_json(serde_json::Value::Null),
+                    &ctx,
+                )
+                .await
+        });
+
+        // Give the busy workflow a moment to actually land on its pool
+        // thread and start burning CPU there before firing the quick one -
+        // generous relative to the busy loop's several-hundred-ms duration.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        let quick_ctx = EngineInputContext::new(None, "exec-quick".into(), false);
+        let start = Instant::now();
+        let quick_result = tokio::time::timeout(
+            Duration::from_millis(150),
+            adapter.run(
+                "svc",
+                "execute",
+                &quick_manifest,
+                from_json(serde_json::Value::Null),
+                &quick_ctx,
+            ),
+        )
+        .await
+        .expect(
+            "the quick workflow should not be blocked behind the busy one on a different pool \
+             thread - if this times out, requests aren't actually being isolated across threads",
+        )
+        .expect("quick workflow should succeed");
+        let elapsed = start.elapsed();
+
+        assert_eq!(to_json(quick_result), serde_json::json!(1));
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "expected the quick workflow to complete promptly on its own pool thread, took \
+             {elapsed:?}"
+        );
+
+        busy_handle
+            .await
+            .expect("busy task should not panic")
+            .expect("busy workflow should succeed");
     }
 }
