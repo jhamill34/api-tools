@@ -1,12 +1,14 @@
 //! Ports (traits) that other crates implement to drive or extend the
-//! execution engine, the service loader, and the service writer - moved
-//! here so a crate that only wants to *call* one of these interfaces
-//! doesn't have to depend on whichever crate happens to implement it.
+//! execution engine and the service catalog - moved here so a crate that
+//! only wants to *call* one of these interfaces doesn't have to depend on
+//! whichever crate happens to implement it.
 //!
-//! Not every port lives here: a driving port (e.g. `service_loader`'s
-//! `ServiceLoaderPort`) whose only implementer is its own crate's concrete
-//! type doesn't reduce anyone's dependency footprint by moving, so those
-//! stay put.
+//! Not every driving surface gets a trait here: `service_loader` and
+//! `service_writer` each have exactly one implementation (their own
+//! `ServiceLoader`/`ServiceWriter`), co-located with the trait that would
+//! wrap it - a caller always depends on the whole crate either way, so a
+//! port there wouldn't reduce anyone's dependency footprint. They're called
+//! directly as concrete types instead.
 
 pub mod catalog;
 pub mod engine;

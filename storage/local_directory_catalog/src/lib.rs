@@ -13,7 +13,6 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::File,
     path::PathBuf,
     sync::{Mutex, PoisonError},
 };
@@ -23,7 +22,7 @@ use core_entities::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
 use local_file_loader::LocalFileFetcher;
 use service_loader::ServiceLoader;
-use service_writer::{ServiceWriter, ServiceWriterPort};
+use service_writer::ServiceWriter;
 
 /// One service's cached state.
 #[derive(Default, Clone)]
@@ -163,9 +162,8 @@ impl ServiceCatalogWriter for LocalDirectoryCatalog {
         service: &VersionedServiceTree,
     ) -> core_entities::ports::catalog::error::Result<()> {
         let fetcher = self.fetcher_for(id)?;
-        let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
 
-        writer
+        ServiceWriter::default()
             .store_service(service, &fetcher, false)
             .map_err(|source| CatalogError::Other {
                 source: anyhow::Error::from(source),
@@ -184,9 +182,8 @@ impl ServiceCatalogWriter for LocalDirectoryCatalog {
         credentials: &Authentication,
     ) -> core_entities::ports::catalog::error::Result<()> {
         let fetcher = self.fetcher_for(id)?;
-        let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
 
-        writer
+        ServiceWriter::default()
             .store_credentials(credentials, &fetcher)
             .map_err(|source| CatalogError::Other {
                 source: anyhow::Error::from(source),

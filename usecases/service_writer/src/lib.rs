@@ -82,60 +82,6 @@ impl Default for ServiceWriter {
     }
 }
 
-/// A primary/driving port: the behavioral surface a driving adapter (e.g.
-/// `apid`'s `save_service` gRPC handler) calls to persist a service. Unlike
-/// [`Storage`] - which [`ServiceWriter`] itself calls *out* through - this
-/// one is implemented *by* [`ServiceWriter`] and called *into* by whoever is
-/// driving it, so a caller can depend on this interface instead of the
-/// concrete [`ServiceWriter`] type.
-pub trait ServiceWriterPort<W>
-where
-    W: io::Write,
-{
-    /// See [`ServiceWriter::store_service`].
-    ///
-    /// # Errors
-    fn store_service(
-        &self,
-        service: &VersionedServiceTree,
-        storage: &dyn Storage<W>,
-        split: bool,
-    ) -> error::Result<()>;
-
-    /// See [`ServiceWriter::store_credentials`].
-    ///
-    /// # Errors
-    fn store_credentials(
-        &self,
-        credentials: &Authentication,
-        storage: &dyn Storage<W>,
-    ) -> error::Result<()>;
-}
-
-impl<W> ServiceWriterPort<W> for ServiceWriter
-where
-    W: io::Write,
-{
-    #[inline]
-    fn store_service(
-        &self,
-        service: &VersionedServiceTree,
-        storage: &dyn Storage<W>,
-        split: bool,
-    ) -> error::Result<()> {
-        self.store_service(service, storage, split)
-    }
-
-    #[inline]
-    fn store_credentials(
-        &self,
-        credentials: &Authentication,
-        storage: &dyn Storage<W>,
-    ) -> error::Result<()> {
-        self.store_credentials(credentials, storage)
-    }
-}
-
 /// Reconstructs an `OpenAPI` document (servers, info, paths, component
 /// schemas) from `message` and writes it as YAML to `source`, overwriting
 /// whatever was already there.
