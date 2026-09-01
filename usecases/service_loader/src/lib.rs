@@ -187,7 +187,9 @@ impl ServiceLoader {
     ) -> error::Result<Option<credential_entities::credentials::Authentication>> {
         match load_credentials(fetcher) {
             Ok(creds) => Ok(Some(creds)),
-            Err(error::ServiceLoader::Io { source }) if source.kind() == io::ErrorKind::NotFound => {
+            Err(error::ServiceLoader::Io { source })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
                 Ok(None)
             }
             Err(err) => Err(err),
@@ -295,7 +297,10 @@ mod test {
 
         let result = ServiceLoader::new().load_credentials(&fetcher);
 
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {result:?}");
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {result:?}"
+        );
     }
 
     #[test]

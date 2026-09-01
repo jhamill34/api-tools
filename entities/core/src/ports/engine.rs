@@ -14,7 +14,9 @@
 use std::sync::Arc;
 
 pub use super::value::RuntimeValue;
-use crate::service::{APIWrappedService, CommonApi, ScriptedAction, SwaggerService, WorkflowService};
+use crate::service::{
+    APIWrappedService, CommonApi, ScriptedAction, SwaggerService, WorkflowService,
+};
 use credential_entities::credentials::Authentication;
 
 /// Errors produced while resolving and running an operation identifier.

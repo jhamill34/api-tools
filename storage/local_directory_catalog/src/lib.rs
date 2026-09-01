@@ -273,7 +273,8 @@ mod tests {
         catalog.refresh("svc").unwrap();
         assert!(catalog.get_credentials("svc").is_none());
 
-        let creds = Authentication::Basic(credential_entities::credentials::BasicCredentials::default());
+        let creds =
+            Authentication::Basic(credential_entities::credentials::BasicCredentials::default());
         catalog.save_credentials("svc", &creds).unwrap();
 
         assert!(catalog.get_credentials("svc").is_some());
