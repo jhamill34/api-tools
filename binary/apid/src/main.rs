@@ -14,130 +14,20 @@ use std::{
     env,
     fs::{self, File},
     path::PathBuf,
-    sync::{Arc, Mutex, PoisonError},
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Context};
 use core_entities::ports::{
-    catalog::{self, error::CatalogError, ServiceCatalog, ServiceCatalogWriter},
-    engine::{EngineLookup, EngineService},
+    catalog::{ServiceCatalog, ServiceCatalogWriter},
+    engine::EngineService,
 };
-use core_entities::service::VersionedServiceTree;
-use credential_entities::credentials::Authentication;
 use dotenv::dotenv;
-use in_memory_storage::{repo::InMemoryRepository, OperationRepos};
-use local_file_loader::LocalFileFetcher;
-use service_writer::{ServiceWriter, ServiceWriterPort};
+use local_directory_catalog::LocalDirectoryCatalog;
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
-
-/// Adapts a shared, mutably-locked [`OperationRepos`] (also written to by
-/// the background loader - see [`workers::start_background_watcher`]) to
-/// [`EngineLookup`]'s and [`ServiceCatalog`]'s read-only, unlocked
-/// contracts, encapsulating the lock so neither `execution_engine::Engine`
-/// nor `grpc_api`'s handlers ever have to know one exists.
-struct LockedLookup(Arc<Mutex<OperationRepos>>);
-
-impl EngineLookup for LockedLookup {
-    fn get_service(&self, id: &str) -> Option<VersionedServiceTree> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_service(id)
-    }
-
-    fn get_credentials(&self, id: &str) -> Option<Authentication> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_credentials(id)
-    }
-}
-
-impl ServiceCatalog for LockedLookup {
-    fn list(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .services
-            .list()
-    }
-
-    fn get_service(&self, id: &str) -> Option<VersionedServiceTree> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .services
-            .get(id)
-    }
-
-    fn get_credentials(&self, id: &str) -> Option<Authentication> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .credentials
-            .get(id)
-    }
-}
-
-/// Adapts each loaded service's on-disk directory (resolved from `paths` by
-/// name) to [`ServiceCatalogWriter`]'s contract, delegating the actual
-/// write to a [`LocalFileFetcher`]/[`ServiceWriter`] pair - the same
-/// concrete adapters `grpc_api`'s `save_service` handler used to reach into
-/// directly.
-struct LocalServiceCatalogWriter {
-    /// Each loaded service's directory on disk, keyed by service name.
-    paths: Arc<HashMap<String, PathBuf>>,
-}
-
-impl LocalServiceCatalogWriter {
-    /// Creates a [`LocalServiceCatalogWriter`] over `paths`.
-    #[must_use]
-    #[inline]
-    fn new(paths: Arc<HashMap<String, PathBuf>>) -> Self {
-        Self { paths }
-    }
-
-    /// Looks up `id`'s directory and opens a [`LocalFileFetcher`] onto it.
-    fn storage_for(&self, id: &str) -> catalog::error::Result<LocalFileFetcher> {
-        let location = self
-            .paths
-            .get(id)
-            .ok_or_else(|| CatalogError::NotFound(format!("Service location for {id}")))?;
-
-        Ok(LocalFileFetcher::from(location.clone()))
-    }
-}
-
-impl ServiceCatalogWriter for LocalServiceCatalogWriter {
-    fn save_service(&self, id: &str, service: &VersionedServiceTree) -> catalog::error::Result<()> {
-        let storage = self.storage_for(id)?;
-        let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
-
-        writer
-            .store_service(service, &storage, false)
-            .map_err(|source| CatalogError::Other {
-                source: anyhow::Error::from(source),
-            })
-    }
-
-    fn save_credentials(
-        &self,
-        id: &str,
-        credentials: &Authentication,
-    ) -> catalog::error::Result<()> {
-        let storage = self.storage_for(id)?;
-        let writer: Box<dyn ServiceWriterPort<File>> = Box::new(ServiceWriter::default());
-
-        writer
-            .store_credentials(credentials, &storage)
-            .map_err(|source| CatalogError::Other {
-                source: anyhow::Error::from(source),
-            })
-    }
-}
 
 /// Builds an [`execution_engine::Engine`] backed by `lookup`, and registers
 /// every adapter enabled by this build's Cargo features (the API-call
@@ -150,7 +40,7 @@ impl ServiceCatalogWriter for LocalServiceCatalogWriter {
 /// down from an already-running async context) — callers on the async
 /// main thread must invoke this through `tokio::task::spawn_blocking`.
 fn construct_execution_engine(
-    lookup: Arc<dyn EngineLookup + Sync + Send>,
+    lookup: Arc<dyn ServiceCatalog + Sync + Send>,
     workflow_path: &str,
     api_path: &str,
 ) -> anyhow::Result<Arc<dyn EngineService>> {
@@ -241,13 +131,6 @@ async fn main() -> anyhow::Result<()> {
 
     dotenv().ok();
 
-    // Setup Singleton Dependencies
-    let repos = OperationRepos::new(
-        Box::new(InMemoryRepository::new()),
-        Box::new(InMemoryRepository::new()),
-    );
-    let repos = Arc::new(Mutex::new(repos));
-
     let config_home = env::var(constants::CONFIG_PATH).with_context(|| {
         format!(
             "Unable to get {} environment variable",
@@ -281,15 +164,15 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect();
     let paths = paths?;
+    let catalog = Arc::new(LocalDirectoryCatalog::new(paths.clone()));
     let paths = Arc::new(paths);
 
     // Spawn off our background loader
     let (watcher_handler, loader_handler) =
-        workers::start_background_watcher(Arc::clone(&repos), &paths)?;
+        workers::start_background_watcher(Arc::clone(&catalog), &paths)?;
 
     let engine = {
-        let repos = Arc::<Mutex<in_memory_storage::OperationRepos>>::clone(&repos);
-        let lookup: Arc<dyn EngineLookup + Sync + Send> = Arc::new(LockedLookup(repos));
+        let lookup: Arc<dyn ServiceCatalog + Sync + Send> = catalog.clone();
         let workflow_path = config.log.workflow_path.clone();
         let api_path = config.log.api_path.clone();
 
@@ -299,9 +182,8 @@ async fn main() -> anyhow::Result<()> {
         .await??
     };
 
-    let catalog: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(LockedLookup(repos));
-    let catalog_writer: Arc<dyn ServiceCatalogWriter + Send + Sync> =
-        Arc::new(LocalServiceCatalogWriter::new(paths));
+    let catalog_writer: Arc<dyn ServiceCatalogWriter + Send + Sync> = catalog.clone();
+    let catalog: Arc<dyn ServiceCatalog + Send + Sync> = catalog;
     let addr = format!("{}:{}", config.server.host, config.server.port).parse()?;
 
     tracing::info!(%addr, "starting server");
@@ -324,11 +206,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn construct_execution_engine_does_not_panic_when_called_via_spawn_blocking() {
-        let repos = OperationRepos::new(
-            Box::new(InMemoryRepository::new()),
-            Box::new(InMemoryRepository::new()),
-        );
-        let repos: Arc<dyn EngineLookup + Sync + Send> = Arc::new(repos);
+        let catalog = LocalDirectoryCatalog::new(HashMap::new());
+        let catalog: Arc<dyn ServiceCatalog + Sync + Send> = Arc::new(catalog);
 
         let log_dir = tempfile::tempdir().unwrap();
         let workflow_path = log_dir
@@ -348,7 +227,7 @@ mod tests {
         // against (reqwest::blocking::Client::new() cannot construct its
         // own tokio runtime from within an already-running one).
         let result = tokio::task::spawn_blocking(move || {
-            construct_execution_engine(repos, &workflow_path, &api_path)
+            construct_execution_engine(catalog, &workflow_path, &api_path)
         })
         .await;
 

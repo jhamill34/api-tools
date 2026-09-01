@@ -26,8 +26,8 @@ members = [
 	"runners/workflow_runner",
 
 	# Implementations of service_loader output ports
-	"storage/in_memory_storage",
 	"storage/local_file_loader",
+	"storage/local_directory_catalog",
 
 	"common/data_structures",
 	"common/core_json_compat",

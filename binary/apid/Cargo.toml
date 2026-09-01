@@ -18,13 +18,10 @@ grpc_api = { path = "../../api/grpc_api" }
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 
-service_loader = { path = "../../usecases/service_loader" }
-service_writer = { path = "../../usecases/service_writer" }
 execution_engine = { path = "../../usecases/execution_engine" }
 # query_engine = { path = "../../usecases/query_engine" }
 
-in_memory_storage = { path = "../../storage/in_memory_storage" }
-local_file_loader = { path = "../../storage/local_file_loader" }
+local_directory_catalog = { path = "../../storage/local_directory_catalog" }
 
 api_caller = { path = "../../runners/api_caller" }
 python_runner = { path = "../../runners/python_runner" }

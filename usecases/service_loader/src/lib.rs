@@ -1,6 +1,7 @@
-//! Loads a service manifest (currently OpenAPI-based), its credentials, and
-//! its override configuration from a [`Fetcher`] source into a
-//! [`LoaderOutput`] sink.
+//! Parses a service manifest (currently OpenAPI-based), its credentials,
+//! and its override configuration from a [`Fetcher`] source, returning the
+//! parsed data - it's up to the caller to decide where (if anywhere) that
+//! gets stored.
 
 mod constants;
 mod loaders;
@@ -9,7 +10,7 @@ pub mod error;
 
 use std::io;
 
-pub use core_entities::ports::loader::{Fetcher, LoaderOutput};
+pub use core_entities::ports::loader::Fetcher;
 use core_entities::service::{
     service_manifest, service_manifest_latest, versioned_service_tree, ServiceManifestLatest,
     SwaggerOverrides, VersionedServiceTree,
@@ -130,8 +131,8 @@ pub fn merge(
     Ok(())
 }
 
-/// Loads a service manifest, and optionally its credentials and override
-/// configuration, from a [`Fetcher`] into a [`LoaderOutput`].
+/// Parses a service manifest, and optionally its credentials and override
+/// configuration, from a [`Fetcher`].
 #[non_exhaustive]
 pub struct ServiceLoader;
 
@@ -143,50 +144,56 @@ impl ServiceLoader {
         Self
     }
 
-    /// Loads the service manifest at `fetcher`'s well-known locations and
-    /// stores it in `output` under `id`. Unless `only_manifest` is set,
-    /// also loads credentials (if present) and, when `merge_overrides` is
-    /// set, loads and applies override configuration via [`merge`] before
-    /// storing.
+    /// Parses the service manifest at `fetcher`'s well-known location.
+    /// Unless `only_manifest` is set, also resolves its `OpenAPI`
+    /// document/action resources and, when `merge_overrides` is set, loads
+    /// and applies override configuration via [`merge`].
     ///
     /// # Errors
     #[inline]
-    pub fn load<R: io::Read>(
+    pub fn load_service<R: io::Read>(
         &self,
-        id: &str,
         fetcher: &dyn Fetcher<R>,
-        output: &mut dyn LoaderOutput,
-        merge_overrides: bool,
         only_manifest: bool,
-    ) -> error::Result<()> {
+        merge_overrides: bool,
+    ) -> error::Result<VersionedServiceTree> {
         let mut value = load_service(fetcher, only_manifest)?;
 
         if !only_manifest
+            && merge_overrides
             && matches!(
                 &value.v1().manifest_latest().value,
                 Some(service_manifest_latest::Value::Swagger(_))
             )
         {
-            match load_credentials(fetcher) {
-                Ok(creds) => output.handle_credentials(id, creds)?,
+            match load_configuration(fetcher) {
+                Ok(config) => merge(&mut value, &config)?,
                 Err(error::ServiceLoader::Io { source })
                     if source.kind() == io::ErrorKind::NotFound => {}
                 Err(err) => return Err(err),
             }
-
-            if merge_overrides {
-                match load_configuration(fetcher) {
-                    Ok(config) => merge(&mut value, &config)?,
-                    Err(error::ServiceLoader::Io { source })
-                        if source.kind() == io::ErrorKind::NotFound => {}
-                    Err(err) => return Err(err),
-                }
-            }
         }
 
-        output.handle_service(id, value)?;
+        Ok(value)
+    }
 
-        Ok(())
+    /// Parses credentials at `fetcher`'s well-known location, if present.
+    ///
+    /// # Errors
+    #[inline]
+    pub fn load_credentials<R: io::Read>(
+        &self,
+        fetcher: &dyn Fetcher<R>,
+    ) -> error::Result<Option<credential_entities::credentials::Authentication>> {
+        match load_credentials(fetcher) {
+            Ok(creds) => Ok(Some(creds)),
+            Err(error::ServiceLoader::Io { source })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(None)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -198,26 +205,32 @@ impl Default for ServiceLoader {
 }
 
 /// A primary/driving port: the behavioral surface a driving adapter (e.g.
-/// `apid`'s background loader) calls to load a service. Unlike [`Fetcher`]/
-/// [`LoaderOutput`] - which [`ServiceLoader`] itself calls *out* through -
-/// this one is implemented *by* [`ServiceLoader`] and called *into* by
-/// whoever is driving it, so a caller can depend on this interface instead
-/// of the concrete [`ServiceLoader`] type.
+/// `apid`'s background loader) calls to parse a service. Unlike [`Fetcher`] -
+/// which [`ServiceLoader`] itself calls *out* through - this one is
+/// implemented *by* [`ServiceLoader`] and called *into* by whoever is
+/// driving it, so a caller can depend on this interface instead of the
+/// concrete [`ServiceLoader`] type.
 pub trait ServiceLoaderPort<R>
 where
     R: io::Read,
 {
-    /// See [`ServiceLoader::load`].
+    /// See [`ServiceLoader::load_service`].
     ///
     /// # Errors
-    fn load(
+    fn load_service(
         &self,
-        id: &str,
         fetcher: &dyn Fetcher<R>,
-        output: &mut dyn LoaderOutput,
-        merge_overrides: bool,
         only_manifest: bool,
-    ) -> error::Result<()>;
+        merge_overrides: bool,
+    ) -> error::Result<VersionedServiceTree>;
+
+    /// See [`ServiceLoader::load_credentials`].
+    ///
+    /// # Errors
+    fn load_credentials(
+        &self,
+        fetcher: &dyn Fetcher<R>,
+    ) -> error::Result<Option<credential_entities::credentials::Authentication>>;
 }
 
 impl<R> ServiceLoaderPort<R> for ServiceLoader
@@ -225,15 +238,21 @@ where
     R: io::Read,
 {
     #[inline]
-    fn load(
+    fn load_service(
         &self,
-        id: &str,
         fetcher: &dyn Fetcher<R>,
-        output: &mut dyn LoaderOutput,
-        merge_overrides: bool,
         only_manifest: bool,
-    ) -> error::Result<()> {
-        self.load(id, fetcher, output, merge_overrides, only_manifest)
+        merge_overrides: bool,
+    ) -> error::Result<VersionedServiceTree> {
+        self.load_service(fetcher, only_manifest, merge_overrides)
+    }
+
+    #[inline]
+    fn load_credentials(
+        &self,
+        fetcher: &dyn Fetcher<R>,
+    ) -> error::Result<Option<credential_entities::credentials::Authentication>> {
+        self.load_credentials(fetcher)
     }
 }
 
@@ -241,8 +260,6 @@ where
 mod test {
     use std::cell::RefCell;
     use std::collections::HashMap;
-
-    use credential_entities::credentials::Authentication;
 
     use super::*;
 
@@ -270,80 +287,76 @@ mod test {
         }
     }
 
-    #[derive(Default)]
-    struct MockOutput {
-        credentials: Option<Authentication>,
-    }
-
-    impl LoaderOutput for MockOutput {
-        fn handle_service(
-            &mut self,
-            _id: &str,
-            _service: VersionedServiceTree,
-        ) -> core_entities::ports::loader::Result<()> {
-            Ok(())
-        }
-
-        fn handle_credentials(
-            &mut self,
-            _id: &str,
-            credentials: Authentication,
-        ) -> core_entities::ports::loader::Result<()> {
-            self.credentials = Some(credentials);
-            Ok(())
-        }
-    }
-
     fn manifest_with_swagger() -> String {
         r#"{"v2":{"swagger":{"source":"openapi"}}}"#.to_owned()
     }
 
     #[test]
-    fn load_skips_missing_credentials_and_config_files() {
+    fn load_credentials_returns_none_when_the_file_is_missing() {
+        let fetcher = MockFetcher::default();
+
+        let result = ServiceLoader::new().load_credentials(&fetcher);
+
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn load_credentials_propagates_malformed_credentials_instead_of_swallowing_them() {
+        let fetcher =
+            MockFetcher::default().with(constants::CREDENTIALS_LOCATION, "not valid json{{{");
+
+        let result = ServiceLoader::new().load_credentials(&fetcher);
+
+        assert!(
+            result.is_err(),
+            "expected malformed credentials to surface as an error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn load_service_skips_a_missing_config_file_when_merging_overrides() {
         let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
         let fetcher = MockFetcher::default()
             .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
             .with("openapi", openapi_doc);
-        let mut output = MockOutput::default();
 
-        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, true, false);
+        let result = ServiceLoader::new().load_service(&fetcher, false, true);
 
         assert!(result.is_ok(), "expected Ok, got {result:?}");
-        assert!(output.credentials.is_none());
     }
 
     #[test]
-    fn load_propagates_malformed_credentials_instead_of_swallowing_them() {
-        let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
-        let fetcher = MockFetcher::default()
-            .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
-            .with("openapi", openapi_doc)
-            .with(constants::CREDENTIALS_LOCATION, "not valid json{{{");
-        let mut output = MockOutput::default();
-
-        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, false, false);
-
-        assert!(
-            result.is_err(),
-            "expected malformed credentials to surface as an error, got Ok"
-        );
-        assert!(output.credentials.is_none());
-    }
-
-    #[test]
-    fn load_propagates_malformed_config_instead_of_swallowing_it() {
+    fn load_service_propagates_malformed_config_instead_of_swallowing_it() {
         let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
         let fetcher = MockFetcher::default()
             .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
             .with("openapi", openapi_doc)
             .with(constants::CONFIG_LOCATION, "not valid json{{{");
-        let mut output = MockOutput::default();
 
-        let result = ServiceLoader::new().load("svc", &fetcher, &mut output, true, false);
+        let result = ServiceLoader::new().load_service(&fetcher, false, true);
 
         assert!(
             result.is_err(),
             "expected malformed config to surface as an error, got Ok"
+        );
+    }
+
+    #[test]
+    fn load_service_does_not_attempt_config_when_merge_overrides_is_unset() {
+        let openapi_doc = include_str!("loaders/openapi/stubs/basic_root.yaml");
+        let fetcher = MockFetcher::default()
+            .with(constants::MANIFEST_LOCATION, &manifest_with_swagger())
+            .with("openapi", openapi_doc)
+            .with(constants::CONFIG_LOCATION, "not valid json{{{");
+
+        let result = ServiceLoader::new().load_service(&fetcher, false, false);
+
+        assert!(
+            result.is_ok(),
+            "expected malformed config to be ignored when merge_overrides is unset, got {result:?}"
         );
     }
 }
