@@ -82,9 +82,13 @@ use tokio::sync::{OnceCell, Semaphore};
 
 type StepCache = Arc<OnceCell<Result<serde_json::Value, WorkflowError>>>;
 
-/// Steps registered via `api.step(fn)`, drained and driven concurrently by
-/// [`WorkflowEngine::run`]'s poll loop. Installed fresh (as Lua app data)
-/// at the start of every `run()` call - see the module docs' "known
+/// Steps registered via `api.step(fn)` since the driver loop last checked,
+/// fully drained (`Vec::drain`, not indexed past) on every poll of
+/// [`WorkflowEngine::run`]'s driver loop - so this only ever holds entries
+/// registered since the last poll, not every step ever registered in the
+/// run (see issue #105; earlier versions indexed past a cursor instead of
+/// draining, so this grew for the whole run). Installed fresh (as Lua app
+/// data) at the start of every `run()` call - see the module docs' "known
 /// scoping limits" note on why concurrent `run()` calls on one engine
 /// aren't safe yet.
 type PendingQueue = Arc<Mutex<Vec<(Arc<RegistryKey>, StepCache)>>>;
@@ -308,7 +312,6 @@ impl WorkflowEngine {
         let mut main_fut = thread.into_async::<_, Value>(input);
 
         let mut background: FuturesUnordered<LocalBoxFuture<'_, ()>> = FuturesUnordered::new();
-        let mut known = 0usize;
 
         let result: Value = std::future::poll_fn(|cx| {
             use std::future::Future;
@@ -318,12 +321,14 @@ impl WorkflowEngine {
             }
 
             {
-                let queue = pending
+                // Fully drain, not index past a cursor - PendingQueue only
+                // needs to carry each entry from registration to here once;
+                // retaining it afterward would just grow the queue for the
+                // whole run for no reason (see issue #105).
+                let mut queue = pending
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                while known < queue.len() {
-                    let (key, cache) = queue[known].clone();
-                    known += 1;
+                for (key, cache) in queue.drain(..) {
                     background.push(build_step_future(lua, key, cache, timeout));
                 }
             }
