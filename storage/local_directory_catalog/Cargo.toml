@@ -1,19 +1,22 @@
 [package]
-name = "in_memory_storage"
+name = "local_directory_catalog"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common_data_structures = { path = "../../common/data_structures" }
-serde_json = { workspace = true }
-
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 
-regex = { workspace = true }
-thiserror = { workspace = true }
+local_file_loader = { path = "../local_file_loader" }
+service_loader = { path = "../../usecases/service_loader" }
+service_writer = { path = "../../usecases/service_writer" }
+
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints]
 workspace = true

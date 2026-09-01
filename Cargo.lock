@@ -159,14 +159,11 @@ dependencies = [
  "execution_engine",
  "filtered_runner",
  "grpc_api",
- "in_memory_storage",
  "javascript_runner",
- "local_file_loader",
+ "local_directory_catalog",
  "notify",
  "python_runner",
  "serde",
- "service_loader",
- "service_writer",
  "tempfile",
  "tokio",
  "toml 0.7.8",
@@ -1182,18 +1179,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "in_memory_storage"
-version = "0.1.0"
-dependencies = [
- "common_data_structures",
- "core_entities",
- "credential_entities",
- "regex",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1375,6 +1360,19 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "local_directory_catalog"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "core_entities",
+ "credential_entities",
+ "local_file_loader",
+ "service_loader",
+ "service_writer",
+ "tempfile",
+]
 
 [[package]]
 name = "local_file_loader"

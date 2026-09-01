@@ -79,20 +79,11 @@ pub enum ServiceLoader {
         source: serde_yaml::Error,
     },
 
-    /// TODO: Rename to `OutputPortError`
+    /// Some other, adapter-specific failure.
     #[error(transparent)]
     Other {
-        /// The wrapped error from an output port implementation.
+        /// The wrapped error.
         source: anyhow::Error,
-    },
-
-    /// A [`LoaderOutput`](core_entities::ports::loader::LoaderOutput) sink
-    /// failed to store loaded data.
-    #[error(transparent)]
-    LoaderOutput {
-        /// The underlying output-port error.
-        #[from]
-        source: core_entities::ports::loader::LoaderOutputError,
     },
 }
 

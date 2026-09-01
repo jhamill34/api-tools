@@ -344,7 +344,8 @@ impl WorkflowRunner for WorkflowAdapter {
 mod tests {
     use std::sync::Mutex;
 
-    use core_entities::ports::engine::{AsyncDataConnectionRunner, CodeRunner, EngineLookup};
+    use core_entities::ports::catalog::ServiceCatalog;
+    use core_entities::ports::engine::{AsyncDataConnectionRunner, CodeRunner};
 
     use super::*;
 
@@ -360,7 +361,11 @@ mod tests {
 
     struct EmptyLookup;
 
-    impl EngineLookup for EmptyLookup {
+    impl ServiceCatalog for EmptyLookup {
+        fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             None
         }
@@ -376,7 +381,7 @@ mod tests {
     fn empty_engine() -> Arc<dyn EngineService> {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(EmptyLookup);
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(EmptyLookup);
         Arc::new(execution_engine::Engine::new(lookup, logger))
     }
 
@@ -465,7 +470,11 @@ mod tests {
 
     struct SingleServiceLookup(core_entities::service::VersionedServiceTree);
 
-    impl EngineLookup for SingleServiceLookup {
+    impl ServiceCatalog for SingleServiceLookup {
+        fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn get_service(&self, id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             (id == "other").then(|| self.0.clone())
         }
@@ -570,7 +579,7 @@ mod tests {
     async fn workflow_adapter_api_call_bridges_into_the_registered_async_connector() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(SingleServiceLookup(swagger_service()));
         let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 
@@ -608,7 +617,7 @@ mod tests {
     async fn workflow_adapter_api_call_errors_for_a_non_swagger_manifest() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(SingleServiceLookup(simple_code_service()));
         let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 
@@ -648,7 +657,7 @@ mod tests {
     async fn workflow_adapter_api_run_bridges_into_the_existing_sync_engine() {
         let (logger, _handle) =
             common_data_structures::log_writer::LogWriter::spawn(tempfile::tempfile().unwrap());
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(SingleServiceLookup(simple_code_service()));
         let mut engine = execution_engine::Engine::new(lookup, logger.clone());
 

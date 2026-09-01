@@ -1,18 +1,20 @@
 //! The execution engine's primary port ([`EngineService`]) and output
-//! ports ([`EngineLookup`], [`DataConnectionRunner`],
-//! [`AsyncDataConnectionRunner`], [`CodeRunner`], [`FilteredRunner`],
-//! [`WorkflowRunner`], [`ScriptRunner`]), plus the shared types they're
-//! called with - moved out of `execution_engine` so a crate that only
-//! implements or calls one of these doesn't have to depend on
-//! `execution_engine`'s own dispatch logic.
+//! ports ([`DataConnectionRunner`], [`AsyncDataConnectionRunner`],
+//! [`CodeRunner`], [`FilteredRunner`], [`WorkflowRunner`], [`ScriptRunner`]),
+//! plus the shared types they're called with - moved out of
+//! `execution_engine` so a crate that only implements or calls one of these
+//! doesn't have to depend on `execution_engine`'s own dispatch logic.
+//!
+//! The engine's runtime lookup of a loaded service/its credentials isn't a
+//! port defined here - it's [`super::catalog::ServiceCatalog`], the same
+//! read port a driving adapter (e.g. `apid`'s gRPC `list`/`get_service`
+//! handlers) uses, rather than a second, narrower lookup trait shaped only
+//! for this crate's caller.
 
 use std::sync::Arc;
 
 pub use super::value::RuntimeValue;
-use crate::service::{
-    APIWrappedService, CommonApi, ScriptedAction, SwaggerService, VersionedServiceTree,
-    WorkflowService,
-};
+use crate::service::{APIWrappedService, CommonApi, ScriptedAction, SwaggerService, WorkflowService};
 use credential_entities::credentials::Authentication;
 
 /// Errors produced while resolving and running an operation identifier.
@@ -89,16 +91,6 @@ impl EngineInputContext {
             raw_response,
         }
     }
-}
-
-/// An input port an `Engine` reads loaded services and credentials from at
-/// execution time.
-pub trait EngineLookup {
-    /// Looks up a loaded service manifest by ID.
-    fn get_service(&self, id: &str) -> Option<VersionedServiceTree>;
-
-    /// Looks up loaded credentials by ID.
-    fn get_credentials(&self, id: &str) -> Option<Authentication>;
 }
 
 /// Everything a [`DataConnectionRunner`] needs to resolve and execute one

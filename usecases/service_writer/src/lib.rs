@@ -24,9 +24,11 @@ impl ServiceWriter {
     }
 
     /// Writes `service`'s manifest as pretty-printed JSON to
-    /// `./manifest.json.new`, and — if the manifest has an `OpenAPI`
+    /// `./manifest.json`, and — if the manifest has an `OpenAPI`
     /// (`swagger`) source — writes the reconstructed `OpenAPI` document
-    /// alongside it via `handle_openapi`.
+    /// alongside it via `handle_openapi`. Overwrites whatever was already
+    /// there - a save is meant to be immediately visible to the next
+    /// reload, not staged for separate review/promotion.
     ///
     /// # Errors
     #[inline]
@@ -44,7 +46,7 @@ impl ServiceWriter {
 
         let manifest_string = serde_json::to_string_pretty(manifest)?;
 
-        let mut manifest_location = storage.store("./manifest.json.new")?;
+        let mut manifest_location = storage.store("./manifest.json")?;
         manifest_location.write_all(manifest_string.as_bytes())?;
 
         let manifest = manifest.v2();
@@ -135,7 +137,8 @@ where
 }
 
 /// Reconstructs an `OpenAPI` document (servers, info, paths, component
-/// schemas) from `message` and writes it as YAML to `{source}.new`.
+/// schemas) from `message` and writes it as YAML to `source`, overwriting
+/// whatever was already there.
 fn handle_openapi<W: io::Write>(
     storage: &dyn Storage<W>,
     source: &str,
@@ -192,8 +195,7 @@ fn handle_openapi<W: io::Write>(
 
     // Serialize and save
     let root_str = serde_yaml::to_string(&root)?;
-    let source = format!("{source}.new");
-    let mut storage_location = storage.store(&source)?;
+    let mut storage_location = storage.store(source)?;
     storage_location.write_all(root_str.as_bytes())?;
 
     Ok(())

@@ -7,10 +7,10 @@
 mod constants;
 
 use common_data_structures::log_writer::LogWriter;
+use core_entities::ports::catalog::ServiceCatalog;
 use core_entities::ports::engine::{
     error, AsyncDataConnectionRunner, CodeRunner, DataConnectionRunner, DataConnectorBundle,
-    EngineInputContext, EngineLookup, EngineService, FilteredRunner, RuntimeValue, ScriptRunner,
-    WorkflowRunner,
+    EngineInputContext, EngineService, FilteredRunner, RuntimeValue, ScriptRunner, WorkflowRunner,
 };
 use core_json_compat::{from_json, to_json};
 use serde_json::Value;
@@ -40,11 +40,11 @@ pub fn wrap_result(result: Value, raw_response: bool) -> Value {
 /// manifest's type.
 pub struct Engine {
     /// The input port used to resolve a service/its credentials by ID at
-    /// execution time. `EngineLookup`'s methods take `&self` only - no
+    /// execution time. `ServiceCatalog`'s methods take `&self` only - no
     /// mutation - so this holds no lock of its own; an implementation
     /// backed by mutable state (e.g. `apid`'s background-loaded service
     /// repository) is responsible for its own internal synchronization.
-    lookup: Arc<dyn EngineLookup + Send + Sync>,
+    lookup: Arc<dyn ServiceCatalog + Send + Sync>,
 
     /// Where every dispatched run is logged.
     logger: LogWriter,
@@ -89,7 +89,7 @@ impl Engine {
     /// Creates an [`Engine`] with no adapters registered yet; use the
     /// `register_*` methods to add them.
     #[inline]
-    pub fn new(lookup: Arc<dyn EngineLookup + Send + Sync>, logger: LogWriter) -> Self {
+    pub fn new(lookup: Arc<dyn ServiceCatalog + Send + Sync>, logger: LogWriter) -> Self {
         Self {
             lookup,
             logger,
@@ -841,7 +841,11 @@ mod tests {
 
     struct FakeLookup;
 
-    impl EngineLookup for FakeLookup {
+    impl ServiceCatalog for FakeLookup {
+        fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             None
         }
@@ -860,7 +864,7 @@ mod tests {
         let (writer, handle) =
             common_data_structures::log_writer::LogWriter::spawn(file.try_clone().unwrap());
 
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, writer.clone());
 
         engine.log("svc.op", "ACTION", "STARTED").unwrap();
@@ -907,7 +911,11 @@ mod tests {
 
     struct WorkflowLookup(core_entities::service::VersionedServiceTree);
 
-    impl EngineLookup for WorkflowLookup {
+    impl ServiceCatalog for WorkflowLookup {
+        fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn get_service(&self, _id: &str) -> Option<core_entities::service::VersionedServiceTree> {
             Some(self.0.clone())
         }
@@ -979,7 +987,7 @@ mod tests {
 
     #[test]
     fn run_reports_the_correct_language_when_no_javascript_code_runner_is_registered() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(WorkflowLookup(
             simple_code_service(code_resource::Language::Javascript),
         ));
         let engine = Engine::new(lookup, test_logger());
@@ -997,7 +1005,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_workflow_dispatches_to_the_registered_workflow_runner() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 
@@ -1030,7 +1038,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_workflow_errors_when_no_workflow_runner_is_registered() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
@@ -1047,7 +1055,7 @@ mod tests {
     async fn run_workflow_errors_when_the_manifest_is_not_a_workflow() {
         let tree = empty_swagger_manifest_tree();
 
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let mut engine = Engine::new(lookup, test_logger());
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         engine.register_workflow_runner(Arc::new(FakeWorkflowRunner {
@@ -1069,7 +1077,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_true_for_a_workflow_manifest() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let engine = Engine::new(lookup, test_logger());
 
@@ -1082,7 +1090,7 @@ mod tests {
     fn is_workflow_operation_is_false_for_a_non_workflow_manifest() {
         let tree = empty_swagger_manifest_tree();
 
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(WorkflowLookup(tree));
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(WorkflowLookup(tree));
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -1092,7 +1100,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_false_when_the_service_is_not_found() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -1102,7 +1110,7 @@ mod tests {
 
     #[test]
     fn is_workflow_operation_is_false_for_an_unparseable_identifier() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> = Arc::new(FakeLookup);
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> = Arc::new(FakeLookup);
         let engine = Engine::new(lookup, test_logger());
 
         let ctx = EngineInputContext::new(None, "exec-1".into(), false);
@@ -1172,7 +1180,7 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_returns_owned_pieces_for_a_swagger_manifest() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(swagger_service()));
         let mut engine = Engine::new(lookup, test_logger());
 
@@ -1196,7 +1204,7 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_errors_when_no_async_connector_is_registered() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(swagger_service()));
         let engine = Engine::new(lookup, test_logger());
 
@@ -1212,7 +1220,7 @@ mod tests {
 
     #[test]
     fn resolve_data_connector_errors_when_the_manifest_is_not_swagger() {
-        let lookup: Arc<dyn EngineLookup + Send + Sync> =
+        let lookup: Arc<dyn ServiceCatalog + Send + Sync> =
             Arc::new(WorkflowLookup(workflow_service_tree("return 42")));
         let mut engine = Engine::new(lookup, test_logger());
 

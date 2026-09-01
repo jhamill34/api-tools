@@ -1,11 +1,9 @@
 //! The [`ServiceCatalog`] and [`ServiceCatalogWriter`] ports: read and write
-//! access to the loaded service catalog for a driving adapter that browses
-//! or edits it directly (e.g. `apid`'s gRPC `list`/`get_service`/
-//! `save_service` handlers).
-//!
-//! Kept separate from [`super::engine::EngineLookup`] - the execution
-//! engine's own narrower runtime-lookup port - so neither port's contract
-//! is shaped by the other's caller.
+//! access to the loaded service catalog, for any driving adapter that reads
+//! or edits it - `apid`'s gRPC `list`/`get_service`/`save_service` handlers,
+//! and the execution engine's own runtime lookups (`ServiceCatalogWriter`'s
+//! methods are never in scope for the engine, since it's only ever handed
+//! a `&dyn ServiceCatalog`).
 
 use crate::service::VersionedServiceTree;
 use credential_entities::credentials::Authentication;
