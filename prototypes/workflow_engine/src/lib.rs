@@ -1,31 +1,45 @@
 //! Spike for issue #68: a coroutine-based, `mlua`-backed engine for
 //! user-defined decision workflows. See `README.md` for scope.
 //!
-//! Core mechanism: `api.step(fn)` wraps a Lua function as a memoized async
-//! step (a [`StepHandle`]). Two things happen when it's called:
+//! Core mechanism (redesigned by issue #106 - see that issue for the
+//! eager/implicit scheduling this replaced): `api.step(fn, deps)`
+//! registers `fn` as a memoized, dependency-aware step (a [`StepHandle`]).
+//! Registration is immediate and synchronous - subject to a `max_steps` cap
+//! (`DEFAULT_MAX_STEPS`, a high backstop against pathological scripts, not
+//! a limit meant to constrain normal usage - see issue #104 and
+//! [`StepCount`]) - but nothing runs yet. `deps` is an optional list of
+//! already-created `StepHandle`s; because a dependency must already exist
+//! to be referenced, a script can never construct a dependency cycle - no
+//! separate cycle-detection pass is needed.
 //!
-//! 1. It's registered with [`WorkflowEngine::run`]'s driver loop, which
-//!    starts making real progress on it - *without* the script ever
-//!    awaiting it - the next time the script's own execution yields (e.g.
-//!    while awaiting its own direct async call). This is the actual
-//!    automatic/eager scheduling `api.step` provides.
-//! 2. Calling `handle:get()` later runs it (if the driver hasn't already)
-//!    and caches the outcome; a second `:get()`, or the driver having
-//!    already finished it, never re-runs the work.
-//!
-//! Registration (`api.step` itself) is always immediate - it never blocks
-//! waiting on other work - though not literally unbounded: a run is capped
-//! at `max_steps` total registrations (`DEFAULT_MAX_STEPS`), a high
-//! backstop against pathological scripts rather than a limit meant to
-//! constrain normal usage - see issue #104 and [`StepCount`]. Actually
-//! *running* a step's body is separately gated by a semaphore
+//! A step only actually executes once something *resolves* it:
+//! `handle:get()`, being listed in `api.join({...})` or another step's
+//! `deps`, or `api.terminal(...)` (see below). Resolving a step first
+//! (concurrently) resolves its own `deps`; if any dependency failed, that
+//! error short-circuits the step - its body never runs at all. Actually
+//! running a step's body is separately gated by a semaphore
 //! (`max_concurrent_steps`, see [`StepSemaphore`]) so a script that
-//! registers many steps at once doesn't spin up unbounded concurrent Lua
-//! coroutines inside a single poll of the driver loop.
+//! resolves many steps at once doesn't spin up unbounded concurrent Lua
+//! coroutines in one burst. Every resolution path funnels through the same
+//! [`StepHandle::resolve`] - whichever caller reaches it first (via
+//! [`OnceCell::get_or_init`]) does the work; everyone else just gets the
+//! same cached outcome.
 //!
-//! `api.join({h1, h2, ...})` still exists for explicitly awaiting several
-//! handles together - it's mostly redundant with automatic eager
-//! scheduling now, but remains a valid explicit synchronization point.
+//! `api.terminal(handle_or_handles)` declares the workflow's actual
+//! output(s) - it resolves the reachable subgraph (concurrently, same
+//! mechanism as `api.join`, which still exists for resolving a few handles
+//! mid-script and continuing) and returns the resolved value(s) as a plain
+//! Lua value/table, same as `:get()`/`api.join` already do - `api.terminal`
+//! doesn't otherwise redirect the script's control flow, so the script is
+//! still responsible for its own `return` (typically `return
+//! api.terminal(...)` directly, but nothing requires that). Calling
+//! `api.terminal` at least once is *required* if the script used
+//! `api.step` at all - checked once the main script returns (see
+//! [`WorkflowEngine::run`]) - which is what closes the old design's actual
+//! gap: a step that's registered but never reached by any resolution path
+//! (a dependent, `:get()`, `api.join`, or `api.terminal`) simply never
+//! runs at all, rather than starting in the background and then being
+//! silently abandoned mid-flight if the script returned first.
 //!
 //! **A load-bearing subtlety, found the hard way (a genuinely hung test,
 //! not a guess):** `mlua`'s execution-time hooks are per-coroutine, not
@@ -42,39 +56,23 @@
 //! [`call_hooked_async`] instead of `Function::call_async`, so it can set
 //! a fresh hook on that specific thread before running it.
 //!
-//! **A second subtlety, also found empirically:** `tokio::select!` is the
-//! wrong tool to drive the main script future alongside background steps.
-//! `api.step`'s registration is a *synchronous side effect inside a poll
-//! of the main future* - by the time `select!` finishes that poll and
-//! loops back around to check for newly-registered steps, the main
-//! script may already have finished (if it went on to directly await its
-//! own work) without the background step ever having been created, let
-//! alone polled. [`WorkflowEngine::run`] instead uses [`std::future::poll_fn`]
-//! for manual control: drain newly-registered steps and give every
-//! outstanding background step a chance to progress on *every single
-//! poll* of the main future, not just between its Ready/Pending
-//! transitions.
-//!
-//! **Known scoping limits, not yet solved here:** a step registered but
-//! never awaited before the script returns is simply abandoned (dropped
-//! mid-flight) - `run()` does not wait for outstanding background work to
-//! finish, and an error from an abandoned step is silently lost. Calling
-//! `run()` concurrently on the *same* [`WorkflowEngine`] instance is also
-//! not safe - the per-run pending-step queue lives in Lua-instance-scoped
-//! app data, shared across the whole engine, not per-call.
+//! **Known scoping limit, not yet solved here:** calling `run()`
+//! concurrently on the *same* [`WorkflowEngine`] instance is not safe -
+//! the per-run semaphore/step-count/terminal-flag state lives in
+//! Lua-instance-scoped app data, shared across the whole engine, not
+//! per-call.
 
 pub mod error;
 
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
     },
     time::{Duration, Instant},
 };
 
 use error::WorkflowError;
-use futures::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
 use mlua::{
     Function, HookTriggers, IntoLuaMulti, Lua, LuaSerdeExt, RegistryKey, StdLib, UserData, Value,
 };
@@ -82,33 +80,28 @@ use tokio::sync::{OnceCell, Semaphore};
 
 type StepCache = Arc<OnceCell<Result<serde_json::Value, WorkflowError>>>;
 
-/// Steps registered via `api.step(fn)` since the driver loop last checked,
-/// fully drained (`Vec::drain`, not indexed past) on every poll of
-/// [`WorkflowEngine::run`]'s driver loop - so this only ever holds entries
-/// registered since the last poll, not every step ever registered in the
-/// run (see issue #105; earlier versions indexed past a cursor instead of
-/// draining, so this grew for the whole run). Installed fresh (as Lua app
-/// data) at the start of every `run()` call - see the module docs' "known
-/// scoping limits" note on why concurrent `run()` calls on one engine
-/// aren't safe yet.
-type PendingQueue = Arc<Mutex<Vec<(Arc<RegistryKey>, StepCache)>>>;
-
 /// Bounds how many `api.step` bodies may actually be *executing* at once -
-/// not how many are registered, which is always immediate and unbounded.
-/// Installed fresh as Lua app data at the start of every `run()` call, same
-/// as [`PendingQueue`]. Without this, a script that registers many steps in
-/// one burst causes the driver loop to spin up and first-poll every one of
-/// them inside a single `poll()` call - see issue #102.
+/// not how many are registered, which is always immediate. Installed fresh
+/// as Lua app data at the start of every `run()` call. Without this, a
+/// script that resolves many steps at once (e.g. via one large
+/// `api.terminal`/`api.join` call, or a long dependency fan-out) could spin
+/// up unbounded concurrent Lua coroutines in one burst - see issue #102.
 type StepSemaphore = Arc<Semaphore>;
 
 /// Running total of steps registered via `api.step` in the current `run()`
-/// call, checked against `max_steps` on every registration. Tracked as its
-/// own counter (rather than reusing `PendingQueue`'s length) so the cap
-/// stays correct regardless of whether `PendingQueue` entries are later
-/// removed once observed by the driver loop (see issue #105) - this only
+/// call, checked against `max_steps` on every registration - this only
 /// ever counts up. Installed fresh as Lua app data at the start of every
-/// `run()` call, same as [`PendingQueue`] and [`StepSemaphore`].
+/// `run()` call, same as [`StepSemaphore`]. Also what [`WorkflowEngine::run`]
+/// checks against [`TerminalFlag`] once the script returns, to enforce that
+/// a script using `api.step` also called `api.terminal` - see issue #106.
 type StepCount = Arc<AtomicUsize>;
+
+/// Set once `api.terminal` is called, checked (alongside [`StepCount`])
+/// once the main script returns to enforce that a script using `api.step`
+/// also declared its output via `api.terminal` - see issue #106 and the
+/// module docs. Installed fresh as Lua app data at the start of every
+/// `run()` call, same as [`StepSemaphore`]/[`StepCount`].
+type TerminalFlag = Arc<AtomicBool>;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOOK_INSTRUCTION_INTERVAL: u32 = 1000;
@@ -153,10 +146,10 @@ where
     thread.into_async(args).await
 }
 
-/// A sandboxed Lua VM with the `api.step`/`api.join` workflow bindings
-/// installed. Host functions (e.g. a real `db_lookup`) are registered
-/// separately via [`WorkflowEngine::register_async_function`] - this
-/// crate has no built-in host functions of its own.
+/// A sandboxed Lua VM with the `api.step`/`api.join`/`api.terminal`
+/// workflow bindings installed. Host functions (e.g. a real `db_lookup`)
+/// are registered separately via [`WorkflowEngine::register_async_function`]
+/// - this crate has no built-in host functions of its own.
 pub struct WorkflowEngine {
     lua: Lua,
     timeout: Duration,
@@ -266,16 +259,17 @@ impl WorkflowEngine {
     /// chunk-argument convention `runners/lua_runner` uses), returning its
     /// JSON-converted return value.
     ///
-    /// Drives the script's own coroutine and any `api.step`-registered
-    /// background steps together via a hand-rolled [`std::future::poll_fn`]
-    /// loop (see the module docs for why `tokio::select!` doesn't work
-    /// here), so steps registered but not yet awaited still make real
-    /// progress whenever the script itself yields.
+    /// Simply awaits the script's own coroutine to completion - steps only
+    /// run when something resolves them (see the module docs), so there's
+    /// no separate background driver to run alongside it. Once the script
+    /// returns, enforces that `api.terminal` was called if the script used
+    /// `api.step` at all - see [`error::WorkflowError::MissingTerminal`].
     ///
     /// # Errors
     /// Returns an error if the script fails to parse, errors at runtime,
-    /// hits its timeout/memory budget, or its return value (or `params`)
-    /// can't be converted between JSON and Lua.
+    /// hits its timeout/memory budget, used `api.step` without ever calling
+    /// `api.terminal`, or its return value (or `params`) can't be converted
+    /// between JSON and Lua.
     pub async fn run(
         &self,
         script: &str,
@@ -284,14 +278,14 @@ impl WorkflowEngine {
         let lua = &self.lua;
         let timeout = self.timeout;
 
-        let pending: PendingQueue = Arc::new(Mutex::new(Vec::new()));
-        lua.set_app_data(pending.clone());
-
         let semaphore: StepSemaphore = Arc::new(Semaphore::new(self.max_concurrent_steps));
         lua.set_app_data(semaphore);
 
         let step_count: StepCount = Arc::new(AtomicUsize::new(0));
-        lua.set_app_data(step_count);
+        lua.set_app_data(step_count.clone());
+
+        let terminal_called: TerminalFlag = Arc::new(AtomicBool::new(false));
+        lua.set_app_data(terminal_called.clone());
 
         let input = lua.to_value(&params)?;
         let wrapped = format!("local input = ...\n{script}");
@@ -309,103 +303,54 @@ impl WorkflowEngine {
                 Ok(())
             },
         );
-        let mut main_fut = thread.into_async::<_, Value>(input);
 
-        let mut background: FuturesUnordered<LocalBoxFuture<'_, ()>> = FuturesUnordered::new();
+        let result: Value = thread.into_async::<_, Value>(input).await?;
 
-        let result: Value = std::future::poll_fn(|cx| {
-            use std::future::Future;
-
-            if let std::task::Poll::Ready(result) = std::pin::Pin::new(&mut main_fut).poll(cx) {
-                return std::task::Poll::Ready(result);
-            }
-
-            {
-                // Fully drain, not index past a cursor - PendingQueue only
-                // needs to carry each entry from registration to here once;
-                // retaining it afterward would just grow the queue for the
-                // whole run for no reason (see issue #105).
-                let mut queue = pending
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                for (key, cache) in queue.drain(..) {
-                    background.push(build_step_future(lua, key, cache, timeout));
-                }
-            }
-
-            while let std::task::Poll::Ready(Some(())) = background.poll_next_unpin(cx) {}
-
-            std::task::Poll::Pending
-        })
-        .await?;
+        let registered = step_count.load(Ordering::Relaxed);
+        if registered > 0 && !terminal_called.load(Ordering::Relaxed) {
+            return Err(WorkflowError::MissingTerminal(registered));
+        }
 
         lua.from_value(result)
             .map_err(|err| WorkflowError::Conversion(err.to_string()))
     }
 }
 
-/// Builds the future that actually runs (and caches) a registered step,
-/// used both by [`WorkflowEngine::run`]'s eager driver and by
-/// [`StepHandle::resolve`] - whichever gets there first via
-/// [`OnceCell::get_or_init`] runs the work; the other just awaits the same
-/// cached outcome.
-fn build_step_future<'lua>(
-    lua: &'lua Lua,
-    key: Arc<RegistryKey>,
-    cache: StepCache,
-    timeout: Duration,
-) -> LocalBoxFuture<'lua, ()> {
-    Box::pin(async move {
-        let _ = cache
-            .get_or_init(|| async {
-                // Gate actual execution (not registration - `api.step`
-                // itself is never blocked) on the run's step semaphore, so
-                // a script that registers many steps at once doesn't spin
-                // up unbounded concurrent Lua coroutines in one burst - see
-                // `StepSemaphore`.
-                let semaphore = lua
-                    .app_data_ref::<StepSemaphore>()
-                    .expect("StepSemaphore installed fresh at the start of every run() call")
-                    .clone();
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("the step semaphore is never closed");
-
-                let func: Function = lua.registry_value(&key)?;
-                let result: Value = call_hooked_async(lua, func, (), timeout).await?;
-                lua.from_value(result)
-                    .map_err(|err| WorkflowError::Conversion(err.to_string()))
-            })
-            .await;
-    })
-}
-
 /// A handle to a lazily-started, memoized workflow step, created by
-/// `api.step(fn)`. `Clone`able since both `:get()` (via the `UserData`
-/// wrapper) and `api.join` need independent, cheap access to the same
-/// underlying cache.
+/// `api.step(fn, deps)`. `Clone`able since `:get()` (via the `UserData`
+/// wrapper), `api.join`, `api.terminal`, and any dependent step's own
+/// `deps` list all need independent, cheap access to the same underlying
+/// cache.
 #[derive(Clone)]
 struct StepHandle {
     lua_fn_key: Arc<RegistryKey>,
     cache: StepCache,
     timeout: Duration,
+    /// Steps this one depends on, declared at registration time (`deps` in
+    /// `api.step(fn, deps)`). Resolved (concurrently, memoized) before this
+    /// step's own body runs - see [`Self::resolve`].
+    deps: Vec<StepHandle>,
 }
 
 impl StepHandle {
-    /// Runs the wrapped function on first call (via [`call_hooked_async`],
-    /// so it doesn't block a thread while awaiting and still gets its own
-    /// timeout budget) and caches the outcome; later calls (including
-    /// concurrent ones, via [`OnceCell`]'s own synchronization) return the
-    /// cached result without re-running it.
+    /// Resolves every dependency first (concurrently; short-circuits with
+    /// the first dependency failure, as [`error::WorkflowError::DependencyFailed`],
+    /// without ever running this step's body), then runs the wrapped
+    /// function on first call (via [`call_hooked_async`], so it doesn't
+    /// block a thread while awaiting and still gets its own timeout
+    /// budget, gated by the run's [`StepSemaphore`]) and caches the
+    /// outcome; later calls (including concurrent ones, via [`OnceCell`]'s
+    /// own synchronization) return the cached result without re-running
+    /// it. Every resolution path - `:get()`, `api.join`, `api.terminal`,
+    /// or being another step's dependency - funnels through here.
     async fn resolve(&self, lua: &Lua) -> Result<serde_json::Value, WorkflowError> {
         self.cache
             .get_or_init(|| async {
-                // Same semaphore-gated execution as `build_step_future` -
-                // whichever of the eager driver or an explicit `:get()`
-                // reaches `get_or_init` first still queues for a permit
-                // before running, so a step can't bypass the concurrency
-                // cap just by being retrieved directly.
+                let dep_futs = self.deps.iter().map(|dep| dep.resolve(lua));
+                for dep_result in futures::future::join_all(dep_futs).await {
+                    dep_result.map_err(|err| WorkflowError::DependencyFailed(err.to_string()))?;
+                }
+
                 let semaphore = lua
                     .app_data_ref::<StepSemaphore>()
                     .expect("StepSemaphore installed fresh at the start of every run() call")
@@ -434,16 +379,42 @@ impl UserData for StepHandle {
     }
 }
 
+/// Resolves every handle in `handles` concurrently (memoized, same as any
+/// other resolution path - see [`StepHandle::resolve`]) and returns their
+/// resolved values as a Lua sequence table in the same order. Shared by
+/// `api.join` and `api.terminal`'s table form.
+async fn resolve_table<'lua>(
+    lua: &'lua Lua,
+    handles: mlua::Table<'lua>,
+) -> mlua::Result<mlua::Table<'lua>> {
+    let mut resolved = Vec::new();
+    for pair in handles.sequence_values::<mlua::AnyUserData>() {
+        let ud = pair?;
+        let handle = ud.borrow::<StepHandle>()?.clone();
+        resolved.push(handle);
+    }
+
+    let futs = resolved.iter().map(|h| h.resolve(lua));
+    let results = futures::future::join_all(futs).await;
+
+    let out = lua.create_table()?;
+    for (i, result) in results.into_iter().enumerate() {
+        let value = result?;
+        out.set(i + 1, lua.to_value(&value)?)?;
+    }
+    Ok(out)
+}
+
 fn install_step_api(lua: &Lua, timeout: Duration, max_steps: usize) -> error::Result<()> {
     let api = lua.create_table()?;
 
-    let step_fn = lua.create_function(move |lua, f: Function| {
+    let step_fn = lua.create_function(move |lua, (f, deps): (Function, Option<mlua::Table>)| {
         // Reject registration outright once the run's total step count
         // would exceed `max_steps` - checked (and counted) before this
         // step does anything else, so a rejected call leaves no trace (no
-        // registry value, no `PendingQueue` entry). This is a backstop
-        // against pathological/runaway scripts, not a limit meant to bite
-        // during normal usage - see issue #104.
+        // registry value, no dependency edges recorded). This is a
+        // backstop against pathological/runaway scripts, not a limit meant
+        // to bite during normal usage - see issue #104.
         let step_count = lua.app_data_ref::<StepCount>().ok_or_else(|| {
             mlua::Error::RuntimeError(
                 "api.step called outside of WorkflowEngine::run - no step count installed".into(),
@@ -455,52 +426,72 @@ fn install_step_api(lua: &Lua, timeout: Duration, max_steps: usize) -> error::Re
                 "workflow registered too many steps via api.step ({count} > {max_steps} max)"
             )));
         }
+        drop(step_count);
+
+        // `deps` can only name handles that already exist (they're `Lua`
+        // values already bound to earlier `api.step` calls' return
+        // values) - a script can never construct a forward reference, so
+        // dependency cycles are impossible by construction. See the
+        // module docs.
+        let deps = match deps {
+            Some(table) => {
+                let mut out = Vec::new();
+                for pair in table.sequence_values::<mlua::AnyUserData>() {
+                    let ud = pair?;
+                    out.push(ud.borrow::<StepHandle>()?.clone());
+                }
+                out
+            }
+            None => Vec::new(),
+        };
 
         let key = Arc::new(lua.create_registry_value(f)?);
         let cache: StepCache = Arc::new(OnceCell::new());
-
-        // Register with the current run's driver loop (see
-        // `WorkflowEngine::run`) so this step starts making real progress
-        // the next time the script itself yields, whether or not the
-        // script ever calls `:get()` on the handle returned here.
-        let pending = lua.app_data_ref::<PendingQueue>().ok_or_else(|| {
-            mlua::Error::RuntimeError(
-                "api.step called outside of WorkflowEngine::run - no pending-step queue installed"
-                    .into(),
-            )
-        })?;
-        pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push((Arc::clone(&key), Arc::clone(&cache)));
 
         Ok(StepHandle {
             lua_fn_key: key,
             cache,
             timeout,
+            deps,
         })
     })?;
     api.set("step", step_fn)?;
 
     let join_fn = lua.create_async_function(|lua, handles: mlua::Table| async move {
-        let mut resolved = Vec::new();
-        for pair in handles.sequence_values::<mlua::AnyUserData>() {
-            let ud = pair?;
-            let handle = ud.borrow::<StepHandle>()?.clone();
-            resolved.push(handle);
-        }
-
-        let futs = resolved.iter().map(|h| h.resolve(lua));
-        let results = futures::future::join_all(futs).await;
-
-        let out = lua.create_table()?;
-        for (i, result) in results.into_iter().enumerate() {
-            let value = result?;
-            out.set(i + 1, lua.to_value(&value)?)?;
-        }
-        Ok(out)
+        resolve_table(lua, handles).await
     })?;
     api.set("join", join_fn)?;
+
+    let terminal_fn = lua.create_async_function(|lua, arg: mlua::Value| async move {
+        // Marks the run's output as declared - checked by
+        // `WorkflowEngine::run` once the script returns, alongside
+        // `StepCount`, to enforce that a script using `api.step` also
+        // called `api.terminal` - see `TerminalFlag` and issue #106.
+        let terminal_called = lua.app_data_ref::<TerminalFlag>().ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "api.terminal called outside of WorkflowEngine::run - no terminal flag installed"
+                    .into(),
+            )
+        })?;
+        terminal_called.store(true, Ordering::Relaxed);
+        drop(terminal_called);
+
+        match arg {
+            mlua::Value::Table(handles) => {
+                Ok(mlua::Value::Table(resolve_table(lua, handles).await?))
+            }
+            mlua::Value::UserData(ud) => {
+                let handle = ud.borrow::<StepHandle>()?.clone();
+                let value = handle.resolve(lua).await?;
+                lua.to_value(&value)
+            }
+            other => Err(mlua::Error::RuntimeError(format!(
+                "api.terminal expects a step handle or a table of step handles, got {}",
+                other.type_name()
+            ))),
+        }
+    })?;
+    api.set("terminal", terminal_fn)?;
 
     lua.globals().set("api", api)?;
 

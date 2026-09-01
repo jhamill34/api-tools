@@ -1,7 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -35,6 +35,7 @@ async fn api_join_runs_independent_steps_concurrently() {
         local a = api.step(function() return db_lookup("A") end)
         local b = api.step(function() return db_lookup("B") end)
         local results = api.join({a, b})
+        api.terminal({ a, b })
         return { a = results[1], b = results[2] }
     "#;
 
@@ -63,7 +64,11 @@ async fn step_get_memoizes_and_only_runs_the_underlying_call_once() {
         local step = api.step(function() return db_lookup("A") end)
         local first = step:get()
         local second = step:get()
-        return { first = first, second = second }
+        -- api.terminal accepts a single handle directly (not just a table)
+        -- and shares the same memoized cache as :get() - proves a third,
+        -- differently-shaped access still doesn't re-run the underlying call.
+        local third = api.terminal(step)
+        return { first = first, second = second, third = third }
     "#;
 
     let result = engine
@@ -73,10 +78,11 @@ async fn step_get_memoizes_and_only_runs_the_underlying_call_once() {
 
     assert_eq!(result["first"], serde_json::json!("A"));
     assert_eq!(result["second"], serde_json::json!("A"));
+    assert_eq!(result["third"], serde_json::json!("A"));
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         1,
-        "expected the underlying db_lookup call to run exactly once, not once per :get()"
+        "expected the underlying db_lookup call to run exactly once, not once per resolution"
     );
 }
 
@@ -90,8 +96,11 @@ async fn sequential_get_calls_do_not_run_concurrently() {
     );
 
     let script = r#"
-        local a = api.step(function() return db_lookup("A") end):get()
-        local b = api.step(function() return db_lookup("B") end):get()
+        local step_a = api.step(function() return db_lookup("A") end)
+        local a = step_a:get()
+        local step_b = api.step(function() return db_lookup("B") end)
+        local b = step_b:get()
+        api.terminal({ step_a, step_b })
         return { a = a, b = b }
     "#;
 
@@ -106,6 +115,189 @@ async fn sequential_get_calls_do_not_run_concurrently() {
         elapsed >= Duration::from_millis(190),
         "expected two sequential :get() calls to take ~200ms (sequential), took {elapsed:?} - \
          if this is fast, something is accidentally making plain :get() calls concurrent"
+    );
+}
+
+#[tokio::test]
+async fn a_step_does_not_start_until_its_declared_dependency_resolves() {
+    let engine = WorkflowEngine::new().expect("build engine");
+
+    let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+    {
+        let order = Arc::clone(&order);
+        engine
+            .register_async_function("mark_a", move |_lua, _args: mlua::MultiValue| {
+                let order = Arc::clone(&order);
+                async move {
+                    // Deliberately the slower of the two - if `b` were
+                    // (incorrectly) not gated on `a`, it would trivially
+                    // finish and log first since it has no delay at all.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    order.lock().unwrap().push("a");
+                    Ok(mlua::Value::Nil)
+                }
+            })
+            .expect("register mark_a");
+    }
+    {
+        let order = Arc::clone(&order);
+        engine
+            .register_async_function("mark_b", move |_lua, _args: mlua::MultiValue| {
+                let order = Arc::clone(&order);
+                async move {
+                    order.lock().unwrap().push("b");
+                    Ok(mlua::Value::Nil)
+                }
+            })
+            .expect("register mark_b");
+    }
+
+    let script = r"
+        local a = api.step(function() return mark_a() end)
+        local b = api.step(function() return mark_b() end, { a })
+        return api.terminal(b)
+    ";
+
+    engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+
+    assert_eq!(
+        order.lock().unwrap().as_slice(),
+        ["a", "b"],
+        "expected b to run only after its dependency a resolved"
+    );
+}
+
+#[tokio::test]
+async fn a_step_waits_for_all_of_multiple_dependencies_concurrently() {
+    let engine = WorkflowEngine::new().expect("build engine");
+    install_mock_db_lookup(
+        &engine,
+        Duration::from_millis(100),
+        Arc::new(AtomicUsize::new(0)),
+    );
+
+    let script = r#"
+        local a = api.step(function() return db_lookup("A") end)
+        local b = api.step(function() return db_lookup("B") end)
+        local c = api.step(function() return "C" end, { a, b })
+        return api.terminal(c)
+    "#;
+
+    let start = Instant::now();
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+    let elapsed = start.elapsed();
+
+    assert_eq!(result, serde_json::json!("C"));
+    assert!(
+        elapsed < Duration::from_millis(180),
+        "expected c's two dependencies (a and b, both ~100ms) to resolve concurrently before c \
+         ran, took {elapsed:?} - if this is slow (~200ms+), deps are being resolved sequentially"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_dependency_short_circuits_the_dependent_step_without_running_it() {
+    let engine = WorkflowEngine::new().expect("build engine");
+
+    let b_ran = Arc::new(AtomicUsize::new(0));
+    {
+        let b_ran = Arc::clone(&b_ran);
+        engine
+            .register_async_function("mark_b_ran", move |_lua, _args: mlua::MultiValue| {
+                let b_ran = Arc::clone(&b_ran);
+                async move {
+                    b_ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(mlua::Value::Nil)
+                }
+            })
+            .expect("register mark_b_ran");
+    }
+
+    let script = r#"
+        local a = api.step(function() error("boom") end)
+        local b = api.step(function() return mark_b_ran() end, { a })
+        return api.terminal(b)
+    "#;
+
+    let result = engine.run(script, serde_json::Value::Null).await;
+
+    assert!(
+        result.is_err(),
+        "expected the run to fail via the failed dependency"
+    );
+    assert_eq!(
+        b_ran.load(Ordering::SeqCst),
+        0,
+        "expected b's body to never run since its dependency a failed"
+    );
+}
+
+#[tokio::test]
+async fn a_step_not_reachable_from_the_terminal_never_runs() {
+    let engine = WorkflowEngine::new().expect("build engine");
+
+    let unused_ran = Arc::new(AtomicUsize::new(0));
+    {
+        let unused_ran = Arc::clone(&unused_ran);
+        engine
+            .register_async_function("mark_unused_ran", move |_lua, _args: mlua::MultiValue| {
+                let unused_ran = Arc::clone(&unused_ran);
+                async move {
+                    unused_ran.fetch_add(1, Ordering::SeqCst);
+                    Ok(mlua::Value::Nil)
+                }
+            })
+            .expect("register mark_unused_ran");
+    }
+
+    let script = r#"
+        local used = api.step(function() return "used" end)
+        -- Registered, but never :get(), never joined, never a dependency,
+        -- and not passed to api.terminal - unreachable, so it must never
+        -- run at all (not "start then get abandoned mid-flight", which is
+        -- what the engine's original eager design did - see issue #106).
+        local unused = api.step(function() return mark_unused_ran() end)
+        return api.terminal(used)
+    "#;
+
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+
+    assert_eq!(result, serde_json::json!("used"));
+    assert_eq!(
+        unused_ran.load(Ordering::SeqCst),
+        0,
+        "expected the unreachable step's body to never run"
+    );
+}
+
+#[tokio::test]
+async fn run_errors_when_api_step_is_used_without_calling_api_terminal() {
+    let engine = WorkflowEngine::new().expect("build engine");
+
+    let script = r#"
+        local a = api.step(function() return "A" end)
+        return a:get()
+    "#;
+
+    let err = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect_err("expected the run to fail without a terminal declared");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("api.terminal"),
+        "expected an error mentioning api.terminal, got: {message}"
     );
 }
 
@@ -139,46 +331,6 @@ async fn a_script_that_exceeds_its_memory_budget_is_aborted() {
     assert!(
         result.is_err(),
         "expected the script exceeding its memory budget to be aborted"
-    );
-}
-
-#[tokio::test]
-async fn a_step_registered_but_never_get_before_the_scripts_own_direct_call_still_progresses_eagerly(
-) {
-    let engine = WorkflowEngine::new().expect("build engine");
-    install_mock_db_lookup(
-        &engine,
-        Duration::from_millis(150),
-        Arc::new(AtomicUsize::new(0)),
-    );
-
-    // "A" is registered via api.step but not retrieved until after the
-    // script directly awaits its own "B" call. If A only starts once
-    // something explicitly waits on it (the old, purely lazy behavior),
-    // total time is ~300ms (B, then A, in series). If A starts eagerly -
-    // making real progress while the script is separately suspended
-    // awaiting B - total time is ~150ms (both concurrent).
-    let script = r#"
-        local step_a = api.step(function() return db_lookup("A") end)
-        local b = db_lookup("B")
-        local a = step_a:get()
-        return { a = a, b = b }
-    "#;
-
-    let start = Instant::now();
-    let result = engine
-        .run(script, serde_json::Value::Null)
-        .await
-        .expect("workflow run");
-    let elapsed = start.elapsed();
-
-    assert_eq!(result["a"], serde_json::json!("A"));
-    assert_eq!(result["b"], serde_json::json!("B"));
-    assert!(
-        elapsed < Duration::from_millis(280),
-        "expected step A (registered eagerly, only retrieved after the script's own direct \
-         call to B) to have already progressed concurrently with B, took {elapsed:?} - eager \
-         scheduling isn't working, A only started once :get() was called"
     );
 }
 
@@ -232,7 +384,7 @@ async fn api_step_execution_is_bounded_by_max_concurrent_steps() {
         local b = api.step(function() return track() end)
         local c = api.step(function() return track() end)
         local d = api.step(function() return track() end)
-        api.join({ a, b, c, d })
+        api.terminal({ a, b, c, d })
         return true
     ";
 
@@ -263,12 +415,14 @@ async fn register_api_function_nests_the_callable_under_the_api_table() {
         .expect("register api.run");
 
     let script = r#"
-        -- also proves api.step/api.join (installed by the engine itself)
-        -- still work alongside a function registered via
+        -- also proves api.step/api.terminal (installed by the engine
+        -- itself) still work alongside a function registered via
         -- register_api_function, i.e. it's added to the same table, not
         -- replacing it.
         local step = api.step(function() return "stepped" end)
-        return { ran = api.run("svc.op"), stepped = step:get() }
+        local ran = api.run("svc.op")
+        local stepped = api.terminal(step)
+        return { ran = ran, stepped = stepped }
     "#;
 
     let result = engine
@@ -292,7 +446,7 @@ async fn api_step_registration_up_to_max_steps_succeeds() {
         for i = 1, 3 do
             handles[i] = api.step(function() return i end)
         end
-        return api.join(handles)
+        return api.terminal(handles)
     ";
 
     let result = engine
@@ -328,12 +482,12 @@ async fn api_step_registration_is_rejected_once_max_steps_is_exceeded() {
 }
 
 #[tokio::test]
-async fn many_steps_registered_across_multiple_polls_all_resolve_correctly() {
-    // Exercises `PendingQueue` being drained across many driver-loop polls
-    // rather than accumulated for the whole run (issue #105) - a bug in
-    // draining (losing or double-processing an entry) would show up here
-    // as a missing/duplicated/wrong result, not just as memory growth,
-    // which isn't otherwise observable from outside the crate.
+async fn many_steps_resolve_correctly_via_terminal() {
+    // General stress/correctness coverage for the redesigned resolution
+    // path (issue #106: recursive resolve() + join_all + memoization,
+    // replacing the earlier PendingQueue-draining driver loop issue #105
+    // exercised) at a scale well beyond what the other tests exercise - a
+    // bug here would show up as a missing/duplicated/wrong result.
     let engine = WorkflowEngine::new().expect("build engine");
     let call_count = Arc::new(AtomicUsize::new(0));
     install_mock_db_lookup(&engine, Duration::from_millis(1), Arc::clone(&call_count));
@@ -343,7 +497,7 @@ async fn many_steps_registered_across_multiple_polls_all_resolve_correctly() {
         for i = 1, 200 do
             handles[i] = api.step(function() return db_lookup(tostring(i)) end)
         end
-        return api.join(handles)
+        return api.terminal(handles)
     ";
 
     let result = engine

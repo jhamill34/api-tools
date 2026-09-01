@@ -11,6 +11,13 @@ pub enum WorkflowError {
     MemoryLimitExceeded,
     #[error("value conversion error: {0}")]
     Conversion(String),
+    #[error("workflow step dependency failed: {0}")]
+    DependencyFailed(String),
+    #[error(
+        "workflow used api.step ({0} step(s) registered) but never called api.terminal to \
+         declare its output"
+    )]
+    MissingTerminal(usize),
 }
 
 impl From<mlua::Error> for WorkflowError {

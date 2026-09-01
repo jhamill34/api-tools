@@ -28,16 +28,17 @@
 //! [`WorkflowAdapter::spawn`] stands up a small *pool* of these dedicated
 //! threads (see issue #103), not just one: a single shared thread would
 //! mean one workflow doing a lot of synchronous, non-yielding Lua work
-//! (e.g. many `api.step`-registered bodies coming ready in one burst - see
-//! #102) could delay every other concurrent workflow request in the
-//! process, since they'd all be cooperatively multitasking on the same OS
-//! thread. Incoming requests are assigned to a pool thread round-robin
-//! (see [`WorkflowAdapter::run`]); a more load-aware strategy (e.g. by each
-//! thread's current pending count) is a possible future refinement, not
-//! needed for the isolation this pool already provides.
+//! (e.g. many `api.step`-registered bodies resolving in one burst, such as
+//! a large `api.terminal`/`api.join` call - see #102) could delay every
+//! other concurrent workflow request in the process, since they'd all be
+//! cooperatively multitasking on the same OS thread. Incoming requests are
+//! assigned to a pool thread round-robin (see [`WorkflowAdapter::run`]); a
+//! more load-aware strategy (e.g. by each thread's current pending count)
+//! is a possible future refinement, not needed for the isolation this pool
+//! already provides.
 //!
 //! Every workflow run also gets two host bindings installed fresh per call,
-//! alongside `api.step`/`api.join`:
+//! alongside `api.step`/`api.join`/`api.terminal` (see issue #106):
 //!
 //! - `api.run(id, params, options)`, mirroring `lua_runner`'s binding of
 //!   the same name: it lets a workflow script synchronously invoke an
