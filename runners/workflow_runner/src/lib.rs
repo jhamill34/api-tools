@@ -208,13 +208,15 @@ async fn run_one_workflow(
     };
     let memory_limit = usize::try_from(manifest.memory_limit_bytes).ok();
 
-    // `max_concurrent_steps` has no manifest field yet (unlike
-    // timeout/memory), so every workflow gets the engine's own default cap
-    // for now - see issue #102.
-    let workflow_engine = workflow_engine::WorkflowEngine::with_limits(timeout, memory_limit, None)
-        .map_err(|err| ExecutionEngine::Other {
-            source: anyhow::Error::from(err),
-        })?;
+    // `max_concurrent_steps`/`max_steps` have no manifest fields yet
+    // (unlike timeout/memory), so every workflow gets the engine's own
+    // default caps for now - see issues #102/#104.
+    let workflow_engine =
+        workflow_engine::WorkflowEngine::with_limits(timeout, memory_limit, None, None).map_err(
+            |err| ExecutionEngine::Other {
+                source: anyhow::Error::from(err),
+            },
+        )?;
 
     install_api_run_binding(
         &workflow_engine,
