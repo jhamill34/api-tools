@@ -112,7 +112,7 @@ async fn sequential_get_calls_do_not_run_concurrently() {
 #[tokio::test]
 async fn a_runaway_script_is_aborted_after_its_time_budget() {
     let engine =
-        WorkflowEngine::with_limits(Duration::from_millis(50), None).expect("build engine");
+        WorkflowEngine::with_limits(Duration::from_millis(50), None, None).expect("build engine");
 
     let result = engine
         .run("while true do end", serde_json::Value::Null)
@@ -123,7 +123,7 @@ async fn a_runaway_script_is_aborted_after_its_time_budget() {
 
 #[tokio::test]
 async fn a_script_that_exceeds_its_memory_budget_is_aborted() {
-    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), Some(1024 * 1024))
+    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), Some(1024 * 1024), None)
         .expect("build engine");
 
     let script = r#"
@@ -198,6 +198,53 @@ async fn run_binds_params_as_a_local_input_argument() {
     assert_eq!(
         result,
         serde_json::json!({ "greeting": "hello world", "doubled": 42 })
+    );
+}
+
+#[tokio::test]
+async fn api_step_execution_is_bounded_by_max_concurrent_steps() {
+    let engine =
+        WorkflowEngine::with_limits(Duration::from_secs(5), None, Some(2)).expect("build engine");
+
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let max_observed = Arc::new(AtomicUsize::new(0));
+
+    {
+        let in_flight = Arc::clone(&in_flight);
+        let max_observed = Arc::clone(&max_observed);
+        engine
+            .register_async_function("track", move |_lua, _args: mlua::MultiValue| {
+                let in_flight = Arc::clone(&in_flight);
+                let max_observed = Arc::clone(&max_observed);
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_observed.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    Ok(mlua::Value::Nil)
+                }
+            })
+            .expect("register track");
+    }
+
+    let script = r"
+        local a = api.step(function() return track() end)
+        local b = api.step(function() return track() end)
+        local c = api.step(function() return track() end)
+        local d = api.step(function() return track() end)
+        api.join({ a, b, c, d })
+        return true
+    ";
+
+    engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+
+    let observed = max_observed.load(Ordering::SeqCst);
+    assert!(
+        observed <= 2,
+        "expected at most 2 steps executing concurrently (max_concurrent_steps), observed {observed}"
     );
 }
 
