@@ -204,58 +204,6 @@ impl Default for ServiceLoader {
     }
 }
 
-/// A primary/driving port: the behavioral surface a driving adapter (e.g.
-/// `apid`'s background loader) calls to parse a service. Unlike [`Fetcher`] -
-/// which [`ServiceLoader`] itself calls *out* through - this one is
-/// implemented *by* [`ServiceLoader`] and called *into* by whoever is
-/// driving it, so a caller can depend on this interface instead of the
-/// concrete [`ServiceLoader`] type.
-pub trait ServiceLoaderPort<R>
-where
-    R: io::Read,
-{
-    /// See [`ServiceLoader::load_service`].
-    ///
-    /// # Errors
-    fn load_service(
-        &self,
-        fetcher: &dyn Fetcher<R>,
-        only_manifest: bool,
-        merge_overrides: bool,
-    ) -> error::Result<VersionedServiceTree>;
-
-    /// See [`ServiceLoader::load_credentials`].
-    ///
-    /// # Errors
-    fn load_credentials(
-        &self,
-        fetcher: &dyn Fetcher<R>,
-    ) -> error::Result<Option<credential_entities::credentials::Authentication>>;
-}
-
-impl<R> ServiceLoaderPort<R> for ServiceLoader
-where
-    R: io::Read,
-{
-    #[inline]
-    fn load_service(
-        &self,
-        fetcher: &dyn Fetcher<R>,
-        only_manifest: bool,
-        merge_overrides: bool,
-    ) -> error::Result<VersionedServiceTree> {
-        self.load_service(fetcher, only_manifest, merge_overrides)
-    }
-
-    #[inline]
-    fn load_credentials(
-        &self,
-        fetcher: &dyn Fetcher<R>,
-    ) -> error::Result<Option<credential_entities::credentials::Authentication>> {
-        self.load_credentials(fetcher)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::cell::RefCell;
