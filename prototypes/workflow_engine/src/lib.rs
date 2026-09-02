@@ -13,8 +13,12 @@
 //!    and caches the outcome; a second `:get()`, or the driver having
 //!    already finished it, never re-runs the work.
 //!
-//! Registration (`api.step` itself) is always immediate and unbounded;
-//! actually *running* a step's body is gated by a semaphore
+//! Registration (`api.step` itself) is always immediate - it never blocks
+//! waiting on other work - though not literally unbounded: a run is capped
+//! at `max_steps` total registrations (`DEFAULT_MAX_STEPS`), a high
+//! backstop against pathological scripts rather than a limit meant to
+//! constrain normal usage - see issue #104 and [`StepCount`]. Actually
+//! *running* a step's body is separately gated by a semaphore
 //! (`max_concurrent_steps`, see [`StepSemaphore`]) so a script that
 //! registers many steps at once doesn't spin up unbounded concurrent Lua
 //! coroutines inside a single poll of the driver loop.
@@ -62,7 +66,10 @@
 pub mod error;
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -90,11 +97,27 @@ type PendingQueue = Arc<Mutex<Vec<(Arc<RegistryKey>, StepCache)>>>;
 /// them inside a single `poll()` call - see issue #102.
 type StepSemaphore = Arc<Semaphore>;
 
+/// Running total of steps registered via `api.step` in the current `run()`
+/// call, checked against `max_steps` on every registration. Tracked as its
+/// own counter (rather than reusing `PendingQueue`'s length) so the cap
+/// stays correct regardless of whether `PendingQueue` entries are later
+/// removed once observed by the driver loop (see issue #105) - this only
+/// ever counts up. Installed fresh as Lua app data at the start of every
+/// `run()` call, same as [`PendingQueue`] and [`StepSemaphore`].
+type StepCount = Arc<AtomicUsize>;
+
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOOK_INSTRUCTION_INTERVAL: u32 = 1000;
 /// Default cap on concurrently-executing `api.step` bodies, used unless
 /// [`WorkflowEngine::with_limits`] is given an explicit override.
 const DEFAULT_MAX_CONCURRENT_STEPS: usize = 32;
+/// Default cap on the *total* number of steps a single `run()` call may
+/// register via `api.step`, used unless [`WorkflowEngine::with_limits`] is
+/// given an explicit override. Deliberately much larger than
+/// [`DEFAULT_MAX_CONCURRENT_STEPS`] - this isn't meant to constrain normal
+/// usage in the low thousands, only to reject clearly pathological/runaway
+/// scripts (tens of thousands of steps and up) outright - see issue #104.
+const DEFAULT_MAX_STEPS: usize = 5_000;
 
 /// Creates a fresh coroutine from `func`, arms it with its own
 /// `timeout`-based hook (re-armed from `Instant::now()` at this call, not
@@ -144,15 +167,18 @@ impl WorkflowEngine {
     /// Returns an error if the underlying Lua VM or its bindings fail to
     /// construct.
     pub fn new() -> error::Result<Self> {
-        Self::with_limits(DEFAULT_TIMEOUT, None, None)
+        Self::with_limits(DEFAULT_TIMEOUT, None, None, None)
     }
 
     /// Builds a sandboxed engine with an explicit wall-clock `timeout`
     /// (applied fresh to every script/step coroutine it runs - see the
     /// module docs), an optional `memory_limit` (bytes, enforced by
-    /// `mlua`'s own allocator hook), and an optional `max_concurrent_steps`
-    /// cap on how many `api.step` bodies may execute at once (`None` uses
-    /// [`DEFAULT_MAX_CONCURRENT_STEPS`] - see [`StepSemaphore`]).
+    /// `mlua`'s own allocator hook), an optional `max_concurrent_steps` cap
+    /// on how many `api.step` bodies may execute at once (`None` uses
+    /// [`DEFAULT_MAX_CONCURRENT_STEPS`] - see [`StepSemaphore`]), and an
+    /// optional `max_steps` cap on the *total* number of steps a single
+    /// `run()` call may register (`None` uses [`DEFAULT_MAX_STEPS`] - see
+    /// [`StepCount`]).
     ///
     /// # Errors
     /// Returns an error if the underlying Lua VM or its bindings fail to
@@ -161,6 +187,7 @@ impl WorkflowEngine {
         timeout: Duration,
         memory_limit: Option<usize>,
         max_concurrent_steps: Option<usize>,
+        max_steps: Option<usize>,
     ) -> error::Result<Self> {
         let lua = Lua::new_with(
             StdLib::TABLE | StdLib::STRING | StdLib::MATH,
@@ -178,7 +205,7 @@ impl WorkflowEngine {
             lua.set_memory_limit(limit)?;
         }
 
-        install_step_api(&lua, timeout)?;
+        install_step_api(&lua, timeout, max_steps.unwrap_or(DEFAULT_MAX_STEPS))?;
 
         Ok(Self {
             lua,
@@ -258,6 +285,9 @@ impl WorkflowEngine {
 
         let semaphore: StepSemaphore = Arc::new(Semaphore::new(self.max_concurrent_steps));
         lua.set_app_data(semaphore);
+
+        let step_count: StepCount = Arc::new(AtomicUsize::new(0));
+        lua.set_app_data(step_count);
 
         let input = lua.to_value(&params)?;
         let wrapped = format!("local input = ...\n{script}");
@@ -399,10 +429,28 @@ impl UserData for StepHandle {
     }
 }
 
-fn install_step_api(lua: &Lua, timeout: Duration) -> error::Result<()> {
+fn install_step_api(lua: &Lua, timeout: Duration, max_steps: usize) -> error::Result<()> {
     let api = lua.create_table()?;
 
     let step_fn = lua.create_function(move |lua, f: Function| {
+        // Reject registration outright once the run's total step count
+        // would exceed `max_steps` - checked (and counted) before this
+        // step does anything else, so a rejected call leaves no trace (no
+        // registry value, no `PendingQueue` entry). This is a backstop
+        // against pathological/runaway scripts, not a limit meant to bite
+        // during normal usage - see issue #104.
+        let step_count = lua.app_data_ref::<StepCount>().ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "api.step called outside of WorkflowEngine::run - no step count installed".into(),
+            )
+        })?;
+        let count = step_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if count > max_steps {
+            return Err(mlua::Error::RuntimeError(format!(
+                "workflow registered too many steps via api.step ({count} > {max_steps} max)"
+            )));
+        }
+
         let key = Arc::new(lua.create_registry_value(f)?);
         let cache: StepCache = Arc::new(OnceCell::new());
 

@@ -111,8 +111,8 @@ async fn sequential_get_calls_do_not_run_concurrently() {
 
 #[tokio::test]
 async fn a_runaway_script_is_aborted_after_its_time_budget() {
-    let engine =
-        WorkflowEngine::with_limits(Duration::from_millis(50), None, None).expect("build engine");
+    let engine = WorkflowEngine::with_limits(Duration::from_millis(50), None, None, None)
+        .expect("build engine");
 
     let result = engine
         .run("while true do end", serde_json::Value::Null)
@@ -123,7 +123,7 @@ async fn a_runaway_script_is_aborted_after_its_time_budget() {
 
 #[tokio::test]
 async fn a_script_that_exceeds_its_memory_budget_is_aborted() {
-    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), Some(1024 * 1024), None)
+    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), Some(1024 * 1024), None, None)
         .expect("build engine");
 
     let script = r#"
@@ -203,8 +203,8 @@ async fn run_binds_params_as_a_local_input_argument() {
 
 #[tokio::test]
 async fn api_step_execution_is_bounded_by_max_concurrent_steps() {
-    let engine =
-        WorkflowEngine::with_limits(Duration::from_secs(5), None, Some(2)).expect("build engine");
+    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), None, Some(2), None)
+        .expect("build engine");
 
     let in_flight = Arc::new(AtomicUsize::new(0));
     let max_observed = Arc::new(AtomicUsize::new(0));
@@ -279,5 +279,50 @@ async fn register_api_function_nests_the_callable_under_the_api_table() {
     assert_eq!(
         result,
         serde_json::json!({ "ran": "ran svc.op", "stepped": "stepped" })
+    );
+}
+
+#[tokio::test]
+async fn api_step_registration_up_to_max_steps_succeeds() {
+    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), None, None, Some(3))
+        .expect("build engine");
+
+    let script = r"
+        local handles = {}
+        for i = 1, 3 do
+            handles[i] = api.step(function() return i end)
+        end
+        return api.join(handles)
+    ";
+
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("registering exactly max_steps steps should succeed");
+
+    assert_eq!(result, serde_json::json!([1, 2, 3]));
+}
+
+#[tokio::test]
+async fn api_step_registration_is_rejected_once_max_steps_is_exceeded() {
+    let engine = WorkflowEngine::with_limits(Duration::from_secs(5), None, None, Some(3))
+        .expect("build engine");
+
+    let script = r"
+        for i = 1, 4 do
+            api.step(function() return i end)
+        end
+        return true
+    ";
+
+    let err = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect_err("expected the 4th api.step registration to be rejected");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("too many steps"),
+        "expected a 'too many steps' error, got: {message}"
     );
 }
