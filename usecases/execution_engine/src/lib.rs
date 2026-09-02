@@ -192,7 +192,7 @@ impl Engine {
                 operation_name,
                 &service,
                 swagger,
-                credentials,
+                credentials.as_ref(),
                 params,
                 options,
                 context,
@@ -244,7 +244,7 @@ impl Engine {
         operation_name: &str,
         service: &core_entities::service::versioned_service_tree::V1,
         swagger: &core_entities::service::SwaggerService,
-        credentials: Option<credential_entities::credentials::Authentication>,
+        credentials: Option<&credential_entities::credentials::Authentication>,
         params: Value,
         options: Value,
         context: &EngineInputContext,
@@ -252,9 +252,7 @@ impl Engine {
         if let Some(connector) = &self.connector {
             let default_api = core_entities::service::CommonApi::default();
             let api = service.common_api.as_ref().unwrap_or(&default_api);
-            let creds = credentials.as_ref();
-
-            let bundle = DataConnectorBundle::new(swagger, api, creds);
+            let bundle = DataConnectorBundle::new(swagger, api, credentials);
             connector
                 .run(
                     service_name,

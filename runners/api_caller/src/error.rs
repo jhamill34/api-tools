@@ -44,14 +44,14 @@ pub enum APICaller {
     InvalidRuntimeExpression(String),
 
     /// A `resultsPath`/cursor path wasn't a well-formed JSON pointer.
-    #[error("Json Pointer Parser Error")]
+    #[error("Json Pointer Parser Error: {source}")]
     JsonPointerParseError {
         #[from]
         source: jsonptr::MalformedPointerError,
     },
 
     /// Resolving a JSON pointer against a response body failed.
-    #[error("Json Pointer Index Error")]
+    #[error("Json Pointer Index Error: {source}")]
     JsonPointerIndexError {
         #[from]
         source: jsonptr::Error,

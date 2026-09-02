@@ -190,7 +190,7 @@ mod test {
             ReferenceType::External(e) => {
                 assert_eq!("https://example.com/json", e);
             }
-            _ => unreachable!(),
+            ReferenceType::Internal => unreachable!(),
         }
         Ok(())
     }

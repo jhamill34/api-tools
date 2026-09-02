@@ -7,21 +7,18 @@ mod constants;
 mod converters;
 pub mod error;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
 use core_json_compat::{from_json, to_json};
-use lazy_static::lazy_static;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyString};
 use regex::Regex;
 use serde_json::Value;
 
-lazy_static! {
-    static ref FUNCTION_REGEX: Option<Regex> =
-        Regex::new(r"def\s*(?P<name>\w+)\s*\(\s*\w+\s*\)\s*:").ok();
-}
+static FUNCTION_REGEX: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"def\s*(?P<name>\w+)\s*\(\s*\w+\s*\)\s*:").ok());
 
 /// Runs `func` inline. A thin seam separating the actual Python-calling
 /// logic from its surrounding setup, kept as its own function for clarity.

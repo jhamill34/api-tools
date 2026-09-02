@@ -4,19 +4,19 @@
 
 pub mod error;
 
-use std::{rc::Rc, sync::Arc};
+use std::{
+    rc::Rc,
+    sync::{Arc, LazyLock},
+};
 
 use common_data_structures::log_writer::LogWriter;
-use lazy_static::lazy_static;
 
 use core_entities::ports::engine::{self, EngineInputContext, EngineService, FilteredRunner};
 use core_json_compat::{from_json, to_json};
 use regex::Regex;
 
-lazy_static! {
-    static ref OPERATION_REGEX: Option<Regex> =
-        Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok();
-}
+static OPERATION_REGEX: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new("(?P<group>.*)/(?P<app>.*):(?P<version>.*)").ok());
 
 /// Resolves an [`APIWrappedService`](core_entities::service::APIWrappedService)
 /// manifest by invoking the wrapped operation on the shared

@@ -13,7 +13,7 @@ pub fn is_hidden(entry: &Path) -> bool {
     entry
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
-        .map_or(true, |name| name.starts_with('.'))
+        .is_none_or(|name| name.starts_with('.'))
 }
 
 /// Lists the non-hidden subdirectories of `path`, one per loaded service.

@@ -7,6 +7,14 @@ use std::collections::HashMap;
 use super::{or_default, require_non_empty};
 use crate::{error::CallbackError, structs};
 
+/// Exchanges the OAuth authorization `code` for an access token and saves
+/// it to the shared credentials, then shuts down the embedded server.
+///
+/// # Errors
+/// Returns [`CallbackError`] if the connector isn't set up for OAuth, is
+/// missing a required config/credential field, the token exchange request
+/// fails, or the response doesn't contain an access token at the
+/// configured path.
 #[get("/oauth/callback?<code>")]
 pub async fn route(
     code: &str,

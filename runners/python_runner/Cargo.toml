@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 serde_json = { workspace = true }
 chrono = { workspace = true }
-lazy_static = { workspace = true }
 
 core_entities = { path = "../../entities/core" }
 core_json_compat = { path = "../../common/core_json_compat" }

@@ -51,7 +51,7 @@
 //! back to the async executor at all until *something* (a hook or a
 //! genuine yield point) interrupts it, so even wrapping the call in
 //! `tokio::time::timeout` does not help - the outer timer future never
-//! gets polled, because the inner poll() call itself never returns. Every
+//! gets polled, because the inner `poll()` call itself never returns. Every
 //! call site here creates its coroutine explicitly via
 //! [`call_hooked_async`] instead of `Function::call_async`, so it can set
 //! a fresh hook on that specific thread before running it.

@@ -32,14 +32,14 @@ pub enum ServiceLoader {
     MissingRequiredField(String),
 
     /// A `$ref` string wasn't a well-formed JSON pointer.
-    #[error("Json Pointer Parser Error")]
+    #[error("Json Pointer Parser Error: {source}")]
     JsonPointerParseError {
         #[from]
         source: jsonptr::MalformedPointerError,
     },
 
     /// Resolving a JSON pointer against the document failed.
-    #[error("Json Pointer Index Error")]
+    #[error("Json Pointer Index Error: {source}")]
     JsonPointerIndexError {
         #[from]
         source: jsonptr::Error,
@@ -72,7 +72,7 @@ pub enum ServiceLoader {
     },
 
     /// Parsing the `OpenAPI` document as YAML failed.
-    #[error("Unable to load YAML spec")]
+    #[error("Unable to load YAML spec: {source}")]
     Yaml {
         /// The underlying YAML error.
         #[from]
