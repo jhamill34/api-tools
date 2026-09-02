@@ -19,7 +19,6 @@ core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 
 execution_engine = { path = "../../usecases/execution_engine" }
-# query_engine = { path = "../../usecases/query_engine" }
 
 local_directory_catalog = { path = "../../storage/local_directory_catalog" }
 
