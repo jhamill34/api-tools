@@ -8,8 +8,6 @@ edition = "2021"
 [dependencies]
 dotenv = { workspace = true }
 clap = { version = "4.2", features = [ "derive" ] }
-tonic = { workspace = true }
-prost = { workspace = true }
 tokio = { workspace = true }
 
 serde = { workspace = true }
@@ -23,15 +21,13 @@ engine_entities = { path = "../../entities/engine" }
 core_entities = { path = "../../entities/core" }
 credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
+grpc_client = { path = "../../api/grpc_client" }
 
 oauth_flow = { path = "../../auth/oauth_flow" }
 
 anyhow = { workspace = true }
 
 dhat = { workspace = true }
-
-[build-dependencies]
-tonic-build = { workspace = true }
 
 [features]
 dhat-heap = []

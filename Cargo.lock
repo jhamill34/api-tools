@@ -132,16 +132,14 @@ dependencies = [
  "dhat",
  "dotenv",
  "engine_entities",
+ "grpc_client",
  "oauth_flow",
- "prost",
  "serde",
  "serde_json",
  "serde_yaml",
  "tera",
  "tokio",
  "toml 0.7.8",
- "tonic",
- "tonic-build",
 ]
 
 [[package]]
@@ -983,6 +981,14 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "grpc_client"
+version = "0.1.0"
+dependencies = [
+ "engine_entities",
+ "tonic",
 ]
 
 [[package]]
