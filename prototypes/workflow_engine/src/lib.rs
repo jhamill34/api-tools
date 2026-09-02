@@ -13,6 +13,12 @@
 //!    and caches the outcome; a second `:get()`, or the driver having
 //!    already finished it, never re-runs the work.
 //!
+//! Registration (`api.step` itself) is always immediate and unbounded;
+//! actually *running* a step's body is gated by a semaphore
+//! (`max_concurrent_steps`, see [`StepSemaphore`]) so a script that
+//! registers many steps at once doesn't spin up unbounded concurrent Lua
+//! coroutines inside a single poll of the driver loop.
+//!
 //! `api.join({h1, h2, ...})` still exists for explicitly awaiting several
 //! handles together - it's mostly redundant with automatic eager
 //! scheduling now, but remains a valid explicit synchronization point.
@@ -65,7 +71,7 @@ use futures::{future::LocalBoxFuture, stream::FuturesUnordered, StreamExt};
 use mlua::{
     Function, HookTriggers, IntoLuaMulti, Lua, LuaSerdeExt, RegistryKey, StdLib, UserData, Value,
 };
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, Semaphore};
 
 type StepCache = Arc<OnceCell<Result<serde_json::Value, WorkflowError>>>;
 
@@ -76,8 +82,19 @@ type StepCache = Arc<OnceCell<Result<serde_json::Value, WorkflowError>>>;
 /// aren't safe yet.
 type PendingQueue = Arc<Mutex<Vec<(Arc<RegistryKey>, StepCache)>>>;
 
+/// Bounds how many `api.step` bodies may actually be *executing* at once -
+/// not how many are registered, which is always immediate and unbounded.
+/// Installed fresh as Lua app data at the start of every `run()` call, same
+/// as [`PendingQueue`]. Without this, a script that registers many steps in
+/// one burst causes the driver loop to spin up and first-poll every one of
+/// them inside a single `poll()` call - see issue #102.
+type StepSemaphore = Arc<Semaphore>;
+
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOOK_INSTRUCTION_INTERVAL: u32 = 1000;
+/// Default cap on concurrently-executing `api.step` bodies, used unless
+/// [`WorkflowEngine::with_limits`] is given an explicit override.
+const DEFAULT_MAX_CONCURRENT_STEPS: usize = 32;
 
 /// Creates a fresh coroutine from `func`, arms it with its own
 /// `timeout`-based hook (re-armed from `Instant::now()` at this call, not
@@ -116,6 +133,7 @@ where
 pub struct WorkflowEngine {
     lua: Lua,
     timeout: Duration,
+    max_concurrent_steps: usize,
 }
 
 impl WorkflowEngine {
@@ -126,18 +144,24 @@ impl WorkflowEngine {
     /// Returns an error if the underlying Lua VM or its bindings fail to
     /// construct.
     pub fn new() -> error::Result<Self> {
-        Self::with_limits(DEFAULT_TIMEOUT, None)
+        Self::with_limits(DEFAULT_TIMEOUT, None, None)
     }
 
     /// Builds a sandboxed engine with an explicit wall-clock `timeout`
     /// (applied fresh to every script/step coroutine it runs - see the
-    /// module docs) and an optional `memory_limit` (bytes, enforced by
-    /// `mlua`'s own allocator hook).
+    /// module docs), an optional `memory_limit` (bytes, enforced by
+    /// `mlua`'s own allocator hook), and an optional `max_concurrent_steps`
+    /// cap on how many `api.step` bodies may execute at once (`None` uses
+    /// [`DEFAULT_MAX_CONCURRENT_STEPS`] - see [`StepSemaphore`]).
     ///
     /// # Errors
     /// Returns an error if the underlying Lua VM or its bindings fail to
     /// construct.
-    pub fn with_limits(timeout: Duration, memory_limit: Option<usize>) -> error::Result<Self> {
+    pub fn with_limits(
+        timeout: Duration,
+        memory_limit: Option<usize>,
+        max_concurrent_steps: Option<usize>,
+    ) -> error::Result<Self> {
         let lua = Lua::new_with(
             StdLib::TABLE | StdLib::STRING | StdLib::MATH,
             mlua::LuaOptions::default(),
@@ -156,7 +180,11 @@ impl WorkflowEngine {
 
         install_step_api(&lua, timeout)?;
 
-        Ok(Self { lua, timeout })
+        Ok(Self {
+            lua,
+            timeout,
+            max_concurrent_steps: max_concurrent_steps.unwrap_or(DEFAULT_MAX_CONCURRENT_STEPS),
+        })
     }
 
     /// Registers `func` as an async Lua-callable global named `name` (e.g.
@@ -228,6 +256,9 @@ impl WorkflowEngine {
         let pending: PendingQueue = Arc::new(Mutex::new(Vec::new()));
         lua.set_app_data(pending.clone());
 
+        let semaphore: StepSemaphore = Arc::new(Semaphore::new(self.max_concurrent_steps));
+        lua.set_app_data(semaphore);
+
         let input = lua.to_value(&params)?;
         let wrapped = format!("local input = ...\n{script}");
         let func: Function = lua.load(&wrapped).into_function()?;
@@ -292,6 +323,20 @@ fn build_step_future<'lua>(
     Box::pin(async move {
         let _ = cache
             .get_or_init(|| async {
+                // Gate actual execution (not registration - `api.step`
+                // itself is never blocked) on the run's step semaphore, so
+                // a script that registers many steps at once doesn't spin
+                // up unbounded concurrent Lua coroutines in one burst - see
+                // `StepSemaphore`.
+                let semaphore = lua
+                    .app_data_ref::<StepSemaphore>()
+                    .expect("StepSemaphore installed fresh at the start of every run() call")
+                    .clone();
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("the step semaphore is never closed");
+
                 let func: Function = lua.registry_value(&key)?;
                 let result: Value = call_hooked_async(lua, func, (), timeout).await?;
                 lua.from_value(result)
@@ -321,6 +366,20 @@ impl StepHandle {
     async fn resolve(&self, lua: &Lua) -> Result<serde_json::Value, WorkflowError> {
         self.cache
             .get_or_init(|| async {
+                // Same semaphore-gated execution as `build_step_future` -
+                // whichever of the eager driver or an explicit `:get()`
+                // reaches `get_or_init` first still queues for a permit
+                // before running, so a step can't bypass the concurrency
+                // cap just by being retrieved directly.
+                let semaphore = lua
+                    .app_data_ref::<StepSemaphore>()
+                    .expect("StepSemaphore installed fresh at the start of every run() call")
+                    .clone();
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("the step semaphore is never closed");
+
                 let func: Function = lua.registry_value(&self.lua_fn_key)?;
                 let result: Value = call_hooked_async(lua, func, (), self.timeout).await?;
                 lua.from_value(result)
