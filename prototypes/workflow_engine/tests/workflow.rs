@@ -326,3 +326,38 @@ async fn api_step_registration_is_rejected_once_max_steps_is_exceeded() {
         "expected a 'too many steps' error, got: {message}"
     );
 }
+
+#[tokio::test]
+async fn many_steps_registered_across_multiple_polls_all_resolve_correctly() {
+    // Exercises `PendingQueue` being drained across many driver-loop polls
+    // rather than accumulated for the whole run (issue #105) - a bug in
+    // draining (losing or double-processing an entry) would show up here
+    // as a missing/duplicated/wrong result, not just as memory growth,
+    // which isn't otherwise observable from outside the crate.
+    let engine = WorkflowEngine::new().expect("build engine");
+    let call_count = Arc::new(AtomicUsize::new(0));
+    install_mock_db_lookup(&engine, Duration::from_millis(1), Arc::clone(&call_count));
+
+    let script = r"
+        local handles = {}
+        for i = 1, 200 do
+            handles[i] = api.step(function() return db_lookup(tostring(i)) end)
+        end
+        return api.join(handles)
+    ";
+
+    let result = engine
+        .run(script, serde_json::Value::Null)
+        .await
+        .expect("workflow run");
+
+    let expected: Vec<serde_json::Value> = (1..=200)
+        .map(|i| serde_json::json!(i.to_string()))
+        .collect();
+    assert_eq!(result, serde_json::Value::Array(expected));
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        200,
+        "expected every one of the 200 steps to run exactly once"
+    );
+}
