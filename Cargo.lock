@@ -1651,6 +1651,7 @@ dependencies = [
  "rocket",
  "serde_json",
  "thiserror",
+ "url",
 ]
 
 [[package]]

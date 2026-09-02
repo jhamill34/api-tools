@@ -4,74 +4,66 @@ use core_entities::service::service_manifest_latest;
 use reqwest::Url;
 use rocket::{response::Redirect, State};
 
-use crate::{error, structs};
+use super::{or_default, require_non_empty};
+use crate::{error::CallbackError, structs};
 
 #[get("/oauth/authorize")]
-pub fn route(env: &State<structs::EnvironmentState>) -> Result<Redirect, error::CallbackResponse> {
+pub fn route(env: &State<structs::EnvironmentState>) -> Result<Redirect, CallbackError> {
     let creds = &env.lock_creds();
 
     let v1 = env.service.v1();
     let service = v1.manifest_latest();
 
     let Some(service_manifest_latest::Value::Swagger(service)) = &service.value else {
-        return Err(error::CallbackResponse::BadRequest(
-            "Service isn't a connector".to_string(),
+        return Err(CallbackError::NotOauthConnector(
+            "Service isn't a connector",
         ));
     };
 
-    let bad_request =
-        || error::CallbackResponse::BadRequest("Connector doesn't use Oauth".to_string());
     let oauth_config = service
         .auth
         .as_ref()
         .and_then(|auth| auth.oauth_config.as_ref())
-        .ok_or_else(bad_request)?;
-    let creds = creds.as_oauth().ok_or_else(bad_request)?;
+        .ok_or(CallbackError::NotOauthConnector(
+            "Connector doesn't use Oauth",
+        ))?;
+    let creds = creds.as_oauth().ok_or(CallbackError::NotOauthConnector(
+        "Connector doesn't use Oauth",
+    ))?;
 
-    let mut params: HashMap<&str, String> = HashMap::new();
-    params.insert("redirect_uri", env.redirect_uri.clone());
+    let mut params: HashMap<&str, &str> = HashMap::new();
+    params.insert("redirect_uri", &env.redirect_uri);
 
-    if oauth_config.response_type.is_empty() {
-        params.insert("response_type", "code".to_string());
-    } else {
-        params.insert("response_type", oauth_config.response_type.clone());
-    }
+    let response_type = or_default(&oauth_config.response_type, "code");
+    params.insert("response_type", response_type);
 
-    if creds.client_id.is_empty() {
-        return Err(error::CallbackResponse::InternalError(
-            "Missing client id".to_string(),
-        ));
-    }
-    params.insert("client_id", creds.client_id.clone());
+    let client_id = require_non_empty(&creds.client_id, "Missing client id")?;
+    params.insert("client_id", client_id);
     // params.insert("state", "UUID");
 
-    if oauth_config.scope.is_empty() {
-        return Err(error::CallbackResponse::InternalError(
-            "Missing scopes".to_string(),
-        ));
+    let scope = require_non_empty(&oauth_config.scope, "Missing scopes")?;
+    params.insert("scope", scope);
+
+    insert_if_present(&mut params, "access_type", &oauth_config.access_type);
+    insert_if_present(&mut params, "prompt", &oauth_config.prompt);
+    insert_if_present(&mut params, "audience", &oauth_config.audience);
+
+    let auth_uri = require_non_empty(&oauth_config.auth_uri, "Missing auth uri")?;
+
+    let url = Url::parse_with_params(auth_uri, params)?;
+
+    Ok(Redirect::to(url.to_string()))
+}
+
+/// Inserts `key`/`value` into `params` only if `value` is non-empty - for
+/// query parameters that are omitted entirely rather than defaulted when
+/// unset.
+fn insert_if_present<'value>(
+    params: &mut HashMap<&'value str, &'value str>,
+    key: &'value str,
+    value: &'value str,
+) {
+    if !value.is_empty() {
+        params.insert(key, value);
     }
-    params.insert("scope", oauth_config.scope.clone());
-
-    if !oauth_config.access_type.is_empty() {
-        params.insert("access_type", oauth_config.access_type.clone());
-    }
-
-    if !oauth_config.prompt.is_empty() {
-        params.insert("prompt", oauth_config.prompt.clone());
-    }
-
-    if !oauth_config.audience.is_empty() {
-        params.insert("audience", oauth_config.audience.clone());
-    }
-
-    if oauth_config.auth_uri.is_empty() {
-        return Err(error::CallbackResponse::InternalError(
-            "Missing auth uri".to_string(),
-        ));
-    }
-
-    let url = Url::parse_with_params(&oauth_config.auth_uri, params);
-
-    url.map(|u| Redirect::to(u.to_string()))
-        .map_err(|e| error::CallbackResponse::InternalError(e.to_string()))
 }

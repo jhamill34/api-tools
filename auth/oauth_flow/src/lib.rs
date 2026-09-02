@@ -59,7 +59,7 @@ impl Authenticator {
             .merge(("tls", tls))
             .merge(("log_level", "off"));
 
-        let _result = rocket::custom(figment)
+        rocket::custom(figment)
             .mount("/", routes)
             .manage(environment)
             .launch()
