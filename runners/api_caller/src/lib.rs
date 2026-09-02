@@ -127,6 +127,19 @@ fn find_results<'item>(
     }
 }
 
+/// Truncates `result` to `total_limit` items in place, or leaves it
+/// unchanged if `total_limit` is `0` (meaning "no limit"). Shared by
+/// [`APICaller::run_internal`] and [`AsyncAPICaller::run_internal`], which
+/// otherwise each clone `result` just to build a truncated copy of an
+/// already-owned `Vec`.
+fn limit_results(mut result: Vec<serde_json::Value>, total_limit: usize) -> Vec<serde_json::Value> {
+    if total_limit > 0 {
+        result.truncate(total_limit);
+    }
+
+    result
+}
+
 /// Looks up `key` in `defined_auth`'s configured params as a plain string,
 /// erroring if it's absent - the shared body of every [`APICallState::handle_auth`]
 /// branch that needs one static auth parameter (as opposed to
@@ -850,11 +863,7 @@ impl APICaller {
             .collect();
 
         let total_limit: usize = total_limit.try_into()?;
-        let result = if total_limit > 0 {
-            result.get(..total_limit).unwrap_or(&result).to_vec()
-        } else {
-            result
-        };
+        let result = limit_results(result, total_limit);
 
         Ok(serde_json::Value::Array(result))
     }
@@ -1014,11 +1023,7 @@ impl AsyncAPICaller {
             .collect();
 
         let total_limit: usize = total_limit.try_into()?;
-        let result = if total_limit > 0 {
-            result.get(..total_limit).unwrap_or(&result).to_vec()
-        } else {
-            result
-        };
+        let result = limit_results(result, total_limit);
 
         Ok(serde_json::Value::Array(result))
     }
@@ -1286,6 +1291,38 @@ mod tests {
             resolve_total_limit(&serde_json::json!({ "limit": "not a number" })),
             constants::DEFAULT_LIMIT
         );
+    }
+
+    #[test]
+    fn limit_results_truncates_to_the_given_limit() {
+        let result = vec![
+            serde_json::json!(1),
+            serde_json::json!(2),
+            serde_json::json!(3),
+        ];
+
+        assert_eq!(
+            limit_results(result, 2),
+            vec![serde_json::json!(1), serde_json::json!(2)]
+        );
+    }
+
+    #[test]
+    fn limit_results_leaves_a_shorter_vec_unchanged() {
+        let result = vec![serde_json::json!(1)];
+
+        assert_eq!(limit_results(result.clone(), 5), result);
+    }
+
+    #[test]
+    fn limit_results_treats_a_zero_limit_as_unlimited() {
+        let result = vec![
+            serde_json::json!(1),
+            serde_json::json!(2),
+            serde_json::json!(3),
+        ];
+
+        assert_eq!(limit_results(result.clone(), 0), result);
     }
 
     #[test]
