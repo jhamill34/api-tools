@@ -406,11 +406,7 @@ async fn register_api_function_nests_the_callable_under_the_api_table() {
     engine
         .register_api_function("run", move |lua, args: mlua::MultiValue| {
             let id: String = mlua::FromLuaMulti::from_lua_multi(args, lua).unwrap_or_default();
-            async move {
-                Ok(mlua::Value::String(
-                    lua.create_string(&format!("ran {id}"))?,
-                ))
-            }
+            async move { Ok(mlua::Value::String(lua.create_string(format!("ran {id}"))?)) }
         })
         .expect("register api.run");
 

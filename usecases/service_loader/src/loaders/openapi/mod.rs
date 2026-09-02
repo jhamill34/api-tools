@@ -883,7 +883,7 @@ mod test {
     }
 
     #[test]
-    fn test_basic_path_with_ref_cycle() -> error::Result<()> {
+    fn test_basic_path_with_ref_cycle() {
         let doc = include_str!("stubs/basic_path_with_ref_cycle.yaml");
 
         let fetcher = SimpleFetcher::new().with("main", doc);
@@ -893,8 +893,6 @@ mod test {
             root,
             Err(error::ServiceLoader::CyclicalReference(_))
         ));
-
-        Ok(())
     }
 
     const REMOTE_DOC: &str = include_str!("stubs/remote_doc.yaml");

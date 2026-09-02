@@ -7,6 +7,13 @@ use rocket::{response::Redirect, State};
 use super::{or_default, require_non_empty};
 use crate::{error::CallbackError, structs};
 
+/// Redirects the browser to the connector's OAuth authorization URL, built
+/// from its manifest and saved credentials.
+///
+/// # Errors
+/// Returns [`CallbackError`] if the connector isn't set up for OAuth, is
+/// missing a required config/credential field, or its `auth_uri` doesn't
+/// parse as a URL.
 #[get("/oauth/authorize")]
 pub fn route(env: &State<structs::EnvironmentState>) -> Result<Redirect, CallbackError> {
     let creds = &env.lock_creds();

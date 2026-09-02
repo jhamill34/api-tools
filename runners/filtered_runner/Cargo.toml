@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 serde_json = { workspace = true }
 jmespath = { workspace = true }
-lazy_static = { workspace = true }
 regex = { workspace = true }
 
 thiserror = { workspace = true }

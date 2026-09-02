@@ -8,20 +8,21 @@ pub mod error;
 
 use mini_v8::MiniV8;
 
-use std::{cell::RefCell, sync::Arc};
+use std::{
+    cell::RefCell,
+    sync::{Arc, LazyLock},
+};
 
 use common_data_structures::log_writer::LogWriter;
 use core_entities::ports::engine::{self, CodeRunner, EngineInputContext, EngineService};
 use core_json_compat::{from_json, to_json};
 
-use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 
-lazy_static! {
-    static ref ARROW_FUNC: Option<Regex> = Regex::new(r"(?P<line>\(\s*\w*\s*\)\s*=>\s*)").ok();
-    static ref REGULAR_FUNC: Option<Regex> =
-        Regex::new(r"function\s*(?P<name>\w+)\s*\(\s*\w*\s*\)\s*").ok();
-}
+static ARROW_FUNC: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"(?P<line>\(\s*\w*\s*\)\s*=>\s*)").ok());
+static REGULAR_FUNC: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"function\s*(?P<name>\w+)\s*\(\s*\w*\s*\)\s*").ok());
 
 thread_local! {
     /// This thread's cached `MiniV8` instance, lazily created on first use.

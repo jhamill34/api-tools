@@ -59,7 +59,7 @@ pub struct Trie<'trie, T> {
     config: &'trie Config,
 }
 
-impl<'trie, T> Default for Trie<'trie, T> {
+impl<T> Default for Trie<'_, T> {
     #[inline]
     fn default() -> Self {
         Self::new(&Config {

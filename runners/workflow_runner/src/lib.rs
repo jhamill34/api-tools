@@ -129,6 +129,10 @@ impl WorkflowAdapter {
     /// bridge into. Each thread runs for the lifetime of the process
     /// (detached, not joined) - it exits on its own once every sender
     /// reaching it is dropped and its channel closes.
+    ///
+    /// # Panics
+    /// Panics if the OS fails to spawn one of the dispatch threads (e.g.
+    /// the process is out of resources).
     #[must_use]
     pub fn spawn(
         engine: &Arc<dyn EngineService>,
