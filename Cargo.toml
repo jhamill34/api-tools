@@ -38,6 +38,10 @@ members = [
 	# tonic service against core_entities::ports alone
 	"api/grpc_api",
 
+	# gRPC transport adapter - apicli's client-side counterpart to
+	# api/grpc_api, wrapping the generated EngineClient
+	"api/grpc_client",
+
 	# Spikes / prototypes - not wired into any binary yet, see the linked
 	# issue in each crate's README for context and status.
 	"prototypes/workflow_engine",

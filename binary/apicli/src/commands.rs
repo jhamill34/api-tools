@@ -1,7 +1,8 @@
 //! Command-line argument parsing (via `clap`), and dispatch of each
 //! subcommand to its handler on [`engine::Cli`].
 
-use crate::engine::{self, handle_schema_convert, handle_schema_merge};
+use crate::engine;
+use crate::schema::{handle_schema_convert, handle_schema_merge};
 use clap::{Parser, Subcommand};
 
 /// Top-level CLI arguments.

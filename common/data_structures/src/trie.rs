@@ -15,11 +15,32 @@ use std::collections::HashMap;
 pub struct Config {
     /// Matches exactly one arbitrary byte at its position — e.g. with
     /// `b'x'`, the pattern `"2xx"` matches `"201"`.
-    pub single_wildcard_byte: u8,
+    single_wildcard_byte: u8,
 
     /// Matches any remaining suffix of the key — e.g. with `b'*'`, the
     /// pattern `"application/*"` matches `"application/json"`.
-    pub multi_wildcard_byte: u8,
+    multi_wildcard_byte: u8,
+}
+
+impl Config {
+    /// Builds a [`Config`] using `single_wildcard_byte` to match exactly one
+    /// byte and `multi_wildcard_byte` to match any remaining suffix.
+    #[inline]
+    #[must_use]
+    pub const fn new(single_wildcard_byte: u8, multi_wildcard_byte: u8) -> Self {
+        Self {
+            single_wildcard_byte,
+            multi_wildcard_byte,
+        }
+    }
+}
+
+impl Default for Config {
+    /// `b'x'` for the single-byte wildcard, `b'*'` for the multi-byte one.
+    #[inline]
+    fn default() -> Self {
+        Self::new(b'x', b'*')
+    }
 }
 
 /// A byte-wise trie mapping string keys to values of type `T`, supporting
@@ -28,14 +49,14 @@ pub struct Config {
 pub struct Trie<'trie, T> {
     /// The value stored at this exact node, if a key ending here has been
     /// inserted.
-    pub value: Option<T>,
+    value: Option<T>,
 
     /// Child nodes keyed by the next byte of the key.
-    pub children: HashMap<u8, Trie<'trie, T>>,
+    children: HashMap<u8, Trie<'trie, T>>,
 
     /// The wildcard configuration shared by this node and all its
     /// descendants.
-    pub config: &'trie Config,
+    config: &'trie Config,
 }
 
 impl<'trie, T> Default for Trie<'trie, T> {
@@ -94,39 +115,43 @@ impl<'trie, T> Trie<'trie, T> {
     /// Recursive, byte-at-a-time implementation of [`find`](Trie::find).
     #[inline]
     fn find_bytes(&self, key: &[u8]) -> Option<&T> {
-        if let Some(next) = key.first() {
-            let remainder = key.get(1..).unwrap_or_default();
+        let Some(next) = key.first() else {
+            return self.value.as_ref();
+        };
+        let remainder = key.get(1..).unwrap_or_default();
 
-            let found = self
-                .children
-                .get(next)
-                .or_else(|| self.children.get(&self.config.single_wildcard_byte))
-                .and_then(|child| child.find_bytes(remainder));
+        let found = self
+            .children
+            .get(next)
+            .or_else(|| self.children.get(&self.config.single_wildcard_byte))
+            .and_then(|child| child.find_bytes(remainder));
 
-            match found {
-                None => {
-                    if let Some(wildcard) = self.children.get(&self.config.multi_wildcard_byte) {
-                        let wildcard_child = key.iter().enumerate().find_map(|(index, val)| {
-                            wildcard.children.get(val).map(|child| (index, child))
-                        });
-
-                        if let Some((index, wildcard_child)) = wildcard_child {
-                            if let Some(remainder) = key.get((index + 1)..) {
-                                wildcard_child.find_bytes(remainder)
-                            } else {
-                                wildcard_child.value.as_ref()
-                            }
-                        } else {
-                            wildcard.value.as_ref()
-                        }
-                    } else {
-                        None
-                    }
-                }
-                _ => found,
-            }
+        if found.is_some() {
+            found
         } else {
-            self.value.as_ref()
+            self.find_multi_wildcard(key)
+        }
+    }
+
+    /// Falls back to the multi-byte wildcard child (if any), matching it
+    /// against the longest suffix of `key` that has a further child under
+    /// it, or its own value if `key` is empty from that point on.
+    #[inline]
+    fn find_multi_wildcard(&self, key: &[u8]) -> Option<&T> {
+        let wildcard = self.children.get(&self.config.multi_wildcard_byte)?;
+
+        let wildcard_child = key
+            .iter()
+            .enumerate()
+            .find_map(|(index, val)| wildcard.children.get(val).map(|child| (index, child)));
+
+        let Some((index, wildcard_child)) = wildcard_child else {
+            return wildcard.value.as_ref();
+        };
+
+        match key.get((index + 1)..) {
+            Some(remainder) => wildcard_child.find_bytes(remainder),
+            None => wildcard_child.value.as_ref(),
         }
     }
 }

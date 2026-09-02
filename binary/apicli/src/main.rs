@@ -6,7 +6,9 @@ mod commands;
 mod config;
 mod constants;
 mod engine;
+mod io_util;
 mod path;
+mod schema;
 mod stub;
 mod template;
 
