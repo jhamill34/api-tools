@@ -3,6 +3,7 @@
 //!
 //! input := name '->' jmespath '<' type '>' context , "description"
 
+use core::fmt;
 use core::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -405,12 +406,12 @@ pub enum PathKey {
     Integer(i64),
 }
 
-impl ToString for PathKey {
-    fn to_string(&self) -> String {
+impl fmt::Display for PathKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PathKey::Identifier(key) => key.clone(),
-            PathKey::Integer(key) => key.to_string(),
-            PathKey::String(key) => format!("\"{key}\""),
+            PathKey::Identifier(key) => write!(f, "{key}"),
+            PathKey::Integer(key) => write!(f, "{key}"),
+            PathKey::String(key) => write!(f, "\"{key}\""),
         }
     }
 }
