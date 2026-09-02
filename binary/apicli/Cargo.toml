@@ -23,7 +23,7 @@ credential_entities = { path = "../../entities/credentials" }
 common_data_structures = { path = "../../common/data_structures" }
 grpc_client = { path = "../../api/grpc_client" }
 
-oauth_flow = { path = "../../auth/oauth_flow" }
+oauth_flow = { path = "../oauth_flow" }
 
 anyhow = { workspace = true }
 

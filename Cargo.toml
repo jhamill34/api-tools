@@ -8,6 +8,13 @@ members = [
 	"binary/apid",
 	"binary/apicli",
 
+	# Not a composition root itself - a standalone Rocket web service
+	# (its own routes, its own error type) that apicli embeds locally
+	# for the interactive OAuth login flow. Grouped here rather than
+	# under entities/usecases/runners/storage since it doesn't
+	# implement any usecase port; see #22.
+	"binary/oauth_flow",
+
 	# Data types that we will be passing around
 	"entities/credentials",
 	"entities/core",
@@ -31,8 +38,6 @@ members = [
 
 	"common/data_structures",
 	"common/core_json_compat",
-
-	"auth/oauth_flow",
 
 	# gRPC transport adapter - implements engine_entities' generated
 	# tonic service against core_entities::ports alone
